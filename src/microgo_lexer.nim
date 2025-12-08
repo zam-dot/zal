@@ -311,6 +311,14 @@ proc lex*(source: string): seq[Token] =
       tokens.add(createToken(tkPlus, "+", line, col))
       inc(i)
       inc(col)
+    of '-':
+      tokens.add(createToken(tkMinus, "-", line, col))
+      inc(i)
+      inc(col)
+    of '*':
+      tokens.add(createToken(tkStar, "*", line, col))
+      inc(i)
+      inc(col)
     of ':':
       tokens.add(createToken(tkColon, ":", line, col))
       inc(i)
@@ -345,12 +353,12 @@ proc lex*(source: string): seq[Token] =
       inc(col)
     of '/':
       if i + 1 < source.len and source[i + 1] == '/':
-        # Line comment
+        # Line comment "//"
         while i < source.len and source[i] != '\n':
           inc(i)
           inc(col)
       else:
-        tokens.add(createToken(tkError, "Unexpected character: " & ch, line, col))
+        tokens.add(createToken(tkSlash, "/", line, col))
         inc(i)
         inc(col)
     of ' ', '\t':

@@ -76,6 +76,7 @@ proc parseFunction(p: Parser): Node
 proc parsePackage(p: Parser): Node
 proc parseCBlock(p: Parser): Node
 proc parsePrimary(p: Parser): Node
+proc parseTerm(p: Parser): Node
 proc parseExpression(p: Parser): Node
 proc parseIf(p: Parser): Node
 
@@ -172,30 +173,14 @@ proc parsePrimary(p: Parser): Node =
   else:
     return nil
 
-proc parseExpression(p: Parser): Node =
+proc parseTerm(p: Parser): Node =
   var left = parsePrimary(p)
   if left == nil:
     return nil
 
-  # Check for operators
   while true:
     case p.current.kind
-    of tkPlus:
-      let op = p.current.lexeme
-      p.advance()
-      let right = parsePrimary(p)
-      if right == nil:
-        break
-      left = Node(
-        kind: nkBinaryExpr,
-        line: left.line,
-        col: left.col,
-        nodeKind: nkBinaryExpr,
-        left: left,
-        right: right,
-        op: op,
-      )
-    of tkEq, tkNe, tkLt, tkGt, tkLe, tkGe: # ADD THESE
+    of tkStar, tkSlash: # High precedence: * and /
       let op = p.current.lexeme
       p.advance()
       let right = parsePrimary(p)
@@ -212,7 +197,47 @@ proc parseExpression(p: Parser): Node =
       )
     else:
       break
+  return left
 
+proc parseExpression(p: Parser): Node =
+  var left = parseTerm(p) # Changed from parsePrimary
+  if left == nil:
+    return nil
+
+  while true:
+    case p.current.kind
+    of tkPlus, tkMinus: # Low precedence: + and -
+      let op = p.current.lexeme
+      p.advance()
+      let right = parseTerm(p) # Changed from parsePrimary
+      if right == nil:
+        break
+      left = Node(
+        kind: nkBinaryExpr,
+        line: left.line,
+        col: left.col,
+        nodeKind: nkBinaryExpr,
+        left: left,
+        right: right,
+        op: op,
+      )
+    of tkEq, tkNe, tkLt, tkGt, tkLe, tkGe: # Lowest: comparisons
+      let op = p.current.lexeme
+      p.advance()
+      let right = parseTerm(p) # Could be parseExpression for right-associative
+      if right == nil:
+        break
+      left = Node(
+        kind: nkBinaryExpr,
+        line: left.line,
+        col: left.col,
+        nodeKind: nkBinaryExpr,
+        left: left,
+        right: right,
+        op: op,
+      )
+    else:
+      break
   return left
 
 # =========================== CALL PARSER ============================

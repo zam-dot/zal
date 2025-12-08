@@ -16,6 +16,8 @@ proc compileToC(source: string): string =
 
 # =========================== FORMAT CODE ================================
 proc formatCode(cCode: string, filename: string): string =
+  echo "DEBUG: Input code length: ", cCode.len
+  echo "DEBUG: First 100 chars: ", cCode[0 .. min(99, cCode.high)]
   let tmpFile = filename & ".tmp.c"
   writeFile(tmpFile, cCode)
 
@@ -29,20 +31,29 @@ proc formatCode(cCode: string, filename: string): string =
   return result
 
 # ========================== COMPILE WITH GCC =============================
-proc compileWithGCC(cFilename: string, outputExe: string): bool =
-  let compileCmd = "gcc " & cFilename & " -o " & outputExe
-  let theResult = execCmdEx(compileCmd)
+proc compileAndRun(cFilename: string): bool =
+  let cmd = "tcc -run " & cFilename & " 2>&1"
+  let theResult = execCmdEx(cmd)
 
   if theResult.exitCode == 0:
-    echo "Compiled to: ", outputExe
+    echo "✅ Program output:"
+    echo theResult.output
     return true
   else:
-    echo "Compilation failed:"
+    echo "❌ Compilation/Runtime failed:"
     echo theResult.output
     return false
+  #  let theResult = execCmdEx(compileCmd)
+  # if theResult.exitCode == 0:
+  #   #    echo "Compiled to: ", outputExe
+  #   return true
+  # else:
+  #   echo "Compilation failed:"
+  #   echo theResult.output
+  #   return false
 
 # ========================== COMPILE FILE =================================
-proc compileFile(filename: string, compileToExecutabe: bool = true): bool =
+proc compileFile(filename: string, runImmediately: bool = true): bool =
   echo "Compiling ", filename, "..."
 
   if not fileExists(filename):
@@ -64,10 +75,8 @@ proc compileFile(filename: string, compileToExecutabe: bool = true): bool =
   writeFile(cFilename, formattedCCode)
   echo "Generated ", cFilename
 
-  if compileToExecutabe:
-    let outputExe = baseName
-    if compileWithGCC(cFilename, outputExe):
-      echo "Run with: ./", outputExe
+  if runImmediately:
+    if compileAndRun(cFilename):
       return true
     else:
       return false
@@ -76,53 +85,64 @@ proc compileFile(filename: string, compileToExecutabe: bool = true): bool =
 
 proc showUsage() =
   echo """
-MicroGo Compiler"
-Usage: microgo [options] <file.mg>"
+MicroGo Compiler
+Usage: 
+  microgo <file.mg>           # Compile and run immediately
+  microgo run <file.mg>       # Same as above
+  microgo build <file.mg>     # Compile to C only
+  
+Options:
+  -h, --help                  Show this help message
 
-Options:"
-  -c     Compile to C only, don't create executable"
-  --help Show this help message"
-
-Examples:"
-  microgo hello.mg          # Compile to executable"
-  microgo -c hello.mg       # Compile to C only"
-  ./hello                   # Run the compiled program"
+Examples:
+  microgo hello.mg            # Compile and run
+  microgo run hello.mg        # Same as above
+  microgo build hello.mg      # Generate hello.c only
 """
 
-# ========================== MAIN======================================
+proc runFile(filename: string): bool =
+  compileFile(filename, runImmediately = true)
+
+proc buildFile(filename: string): bool =
+  compileFile(filename, runImmediately = false)
+
+# ============================= MAIN ======================================
 proc main() =
   if paramCount() == 0:
     showUsage()
     quit(1)
 
-  var
-    filename = ""
-    compileToExecutabe = true
+  let command = paramStr(1)
 
-  for i in 1 .. paramCount():
-    let arg = paramStr(i)
-
-    case arg
-    of "-c":
-      compileToExecutabe = false
-    of "--help", "-h":
-      showUsage()
-      quit(0)
-    else:
-      if arg.startsWith("-"):
-        echo "Unknown option: ", arg
-        showUsage()
-        quit(1)
-      else:
-        filename = arg
-
-  if filename == "":
-    echo "No file specified"
+  case command
+  of "run":
+    if paramCount() < 2:
+      echo "Usage: microgo run <file.mg>"
+      quit(1)
+    let filename = paramStr(2)
+    if not runFile(filename):
+      quit(1)
+  of "build":
+    if paramCount() < 2:
+      echo "Usage: microgo build <file.mg>"
+      quit(1)
+    let filename = paramStr(2)
+    if not buildFile(filename):
+      quit(1) # Missing this check!
+  of "--help", "-h":
     showUsage()
-    quit(1)
-
-  if not compileFile(filename, compileToExecutabe):
-    quit(1)
+    quit(0)
+  else:
+    # Check if it's a flag or filename
+    if command.startsWith("-"):
+      echo "Unknown option: ", command
+      showUsage()
+      quit(1)
+    else:
+      # Backward compatibility: treat as filename and run immediately
+      let filename = command
+      if not runFile(filename): # Changed to runFile
+        quit(1) # Missing this check!
 
 when isMainModule:
   main()

@@ -2,170 +2,255 @@
 import microgo_parser
 import std/[strutils, strformat]
 
-proc generateC*(node: Node, context: string = "global"): string =
+# =========================== CONTEXT TYPES ============================
+type CodegenContext* = enum
+  cgGlobal # Top-level (functions, global variables)
+  cgFunction # Inside a function body
+  cgExpression # Inside an expression
+
+# =========================== HELPER FUNCTIONS ============================
+proc indentLine(code: string, context: CodegenContext): string =
+  case context
+  of cgFunction:
+    "  " & code
+  else:
+    code
+
+proc escapeString(str: string): string =
+  ## Escape special characters for C string literals
+  for ch in str:
+    case ch
+    of '\n':
+      result &= "\\n"
+    of '\t':
+      result &= "\\t"
+    of '\r':
+      result &= "\\r"
+    of '\\':
+      result &= "\\\\"
+    of '"':
+      result &= "\\\""
+    else:
+      result &= ch
+
+# =========================== NODE GENERATORS ============================
+proc generateLiteral(node: Node): string =
   case node.kind
-  of nkProgram:
-    result = ""
+  of nkLiteral:
+    node.literalValue
+  of nkStringLit:
+    "\"" & escapeString(node.literalValue) & "\""
+  else:
+    ""
 
-    var
-      hasCMain = false
-      hasMicroGoMain = false
-      topLevelCode = ""
+proc generateIdentifier(node: Node): string =
+  node.identName
 
-    for funcNode in node.functions:
-      if funcNode.kind == nkCBlock:
-        let cCode = generateC(funcNode, "global")
-        topLevelCode &= cCode & "\n"
-        if "int main()" in cCode:
-          hasCMain = true
-      elif funcNode.kind == nkFunction:
-        if funcNode.funcName == "main":
-          hasMicroGoMain = true
-        result &= generateC(funcNode, "global") & "\n"
+proc generateExpression(node: Node): string =
+  case node.kind
+  of nkBinaryExpr:
+    generateExpression(node.left) & " " & node.op & " " & generateExpression(node.right)
+  of nkIdentifier:
+    generateIdentifier(node)
+  of nkLiteral, nkStringLit:
+    generateLiteral(node)
+  else:
+    ""
 
-    result = topLevelCode & result
+proc generateCBlock(node: Node, context: CodegenContext): string =
+  var cCode = node.cCode.strip(leading = false, trailing = true)
 
-    if not hasCMain and not hasMicroGoMain:
-      result &= "\nint main() {\n"
-      result &= "  // Auto-generated entry point\n"
-      result &= "  return 0;\n"
-      result &= "}\n"
-  of nkPackage:
-    result = "// Package: " & node.packageName & "\n"
-  of nkFunction:
-    if node.funcName == "main":
-      result = "int main() {\n"
-    else:
-      result = "void " & node.funcName & "() {\n"
+  # Check for function definitions in non-global context
+  let looksLikeFunction =
+    (
+      " int " in cCode or " void " in cCode or " char " in cCode or " float " in cCode or
+      " double " in cCode
+    ) and "(" in cCode and "){" in cCode
 
-    result &= generateC(node.body, "function")
-
-    if node.funcName == "main":
-      result &= "  return 0;\n"
-
-    result &= "}\n"
-  of nkAssignment:
-    result =
-      generateC(node.target, context) & " = " & generateC(node.value, context) & ";\n"
-    if context == "function":
-      result = "  " & result
-  of nkReturn:
-    if node.callArgs.len > 0:
-      result = "return " & generateC(node.callArgs[0], context) & ";\n"
-    else:
-      result = "return;\n"
-    if context == "function":
-      result = "  " & result
-  of nkBlock:
-    result = ""
-    for stmt in node.statements:
-      let stmtCode = generateC(stmt, context)
-      if context == "function":
-        result &= "  " & stmtCode
-      else:
-        result &= stmtCode
-
-      if stmtCode.len > 0 and stmtCode[^1] != '\n':
-        result &= "\n"
-  of nkCBlock:
-    var cCode = node.cCode
-
-    cCode = cCode.strip(leading = false, trailing = true)
-
-    let looksLikeFunction =
-      (
-        " int " in cCode or " void " in cCode or " char " in cCode or " float " in cCode or
-        " double " in cCode
-      ) and "(" in cCode and "){" in cCode
-
-    if looksLikeFunction and context != "global":
-      echo fmt"""
+  if looksLikeFunction and context != cgGlobal:
+    echo fmt"""
 Warning: Function definition inside function at line {node.line}
 this may not compile to standard C.
 Consider moving to top level:
 @c {{ ... }}"""
 
+  if context == cgFunction:
+    result = cCode.replace("\n", "\n  ")
+  else:
     result = cCode
-    if result.len > 0 and result[^1] != '\n':
-      result &= "\n"
 
-    if context == "function":
-      result =
-        "  " & result.replace("\n", "\n  ").strip(leading = false, trailing = true) &
-        "\n"
-  of nkVarDecl:
-    result = "int " & node.varName & " = " & generateC(node.varValue, context) & ";\n"
-    if context == "function":
-      result = "  " & result
-  of nkBinaryExpr:
-    result =
-      generateC(node.left, context) & " " & node.op & " " &
-      generateC(node.right, context)
-  of nkIdentifier:
-    result = node.identName
-  of nkLiteral:
-    result = node.literalValue
-  of nkStringLit:
-    var escaped = ""
-    for ch in node.literalValue:
-      case ch
-      of '\n':
-        escaped &= "\\n"
-      of '\t':
-        escaped &= "\\t"
-      of '\r':
-        escaped &= "\\r"
-      of '\\':
-        escaped &= "\\\\"
-      of '"':
-        escaped &= "\\\""
-      else:
-        escaped &= ch
+  if result.len > 0 and result[^1] != '\n':
+    result &= "\n"
 
-    result = "\"" & escaped & "\""
-  of nkCall:
-    var callCode = ""
+proc generateVarDecl(node: Node, context: CodegenContext): string =
+  var code = "int " & node.varName & " = " & generateExpression(node.varValue) & ";\n"
+  return indentLine(code, context)
 
-    if node.callFunc == "print":
-      callCode = "printf("
+proc generateCall(node: Node, context: CodegenContext): string =
+  var callCode = ""
 
-      if node.callArgs.len == 0:
-        callCode &= "\"\\n\""
-      else:
-        let firstArg = node.callArgs[0]
-        case firstArg.kind
-        of nkStringLit:
-          let str = firstArg.literalValue
+  if node.callFunc == "print":
+    callCode = "printf("
 
-          var percentCount = 0
-          for ch in str:
-            if ch == '%':
-              inc(percentCount)
+    if node.callArgs.len == 0:
+      callCode &= "\"\\n\""
+    else:
+      let firstArg = node.callArgs[0]
 
-          if percentCount > 0 and node.callArgs.len == 1:
-            echo fmt"""
+      if firstArg.kind == nkStringLit:
+        # Check for format specifiers vs argument count
+        let str = firstArg.literalValue
+        var percentCount = 0
+        for ch in str:
+          if ch == '%':
+            inc(percentCount)
+
+        if percentCount > 0 and node.callArgs.len == 1:
+          echo fmt"""
 Warning at line {node.line}:
 String has {percentCount} % characters
 But print() has only 1 argument
 Did you forget arguments for the format specifiers?
 """
 
-          callCode &= generateC(firstArg, context)
-          for i in 1 ..< node.callArgs.len:
-            callCode &= ", " & generateC(node.callArgs[i], context)
-        else:
-          callCode &= "\"%d\", " & generateC(firstArg, context)
+        callCode &= generateExpression(firstArg)
+        for i in 1 ..< node.callArgs.len:
+          callCode &= ", " & generateExpression(node.callArgs[i])
+      else:
+        callCode &= "\"%d\", " & generateExpression(firstArg)
 
-      callCode &= ");\n"
+    callCode &= ");\n"
+  else:
+    callCode = node.callFunc & "("
+    for i, arg in node.callArgs:
+      if i > 0:
+        callCode &= ", "
+      callCode &= generateExpression(arg)
+    callCode &= ");\n"
+
+  return indentLine(callCode, context)
+
+proc generateAssignment(node: Node, context: CodegenContext): string =
+  var code =
+    generateExpression(node.target) & " = " & generateExpression(node.value) & ";\n"
+  return indentLine(code, context)
+
+proc generateReturn(node: Node, context: CodegenContext): string =
+  var code = "return"
+  if node.callArgs.len > 0:
+    code &= " " & generateExpression(node.callArgs[0])
+  code &= ";\n"
+  return indentLine(code, context)
+
+proc generateBlock(node: Node, context: CodegenContext): string =
+  if node == nil:
+    return ""
+
+  var blockResult = ""
+  for stmt in node.statements:
+    var stmtCode = ""
+
+    case stmt.kind
+    of nkAssignment:
+      stmtCode = generateAssignment(stmt, context)
+    of nkReturn:
+      stmtCode = generateReturn(stmt, context)
+    of nkCBlock:
+      stmtCode = generateCBlock(stmt, context)
+    of nkVarDecl:
+      stmtCode = generateVarDecl(stmt, context)
+    of nkCall:
+      stmtCode = generateCall(stmt, context)
     else:
-      callCode = node.callFunc & "("
-      for i, arg in node.callArgs:
-        if i > 0:
-          callCode &= ", "
-        callCode &= generateC(arg, context)
-      callCode &= ");\n"
+      continue # Skip unsupported statement types
 
+    if stmtCode.len > 0:
+      blockResult &= stmtCode
+      if stmtCode[^1] != '\n':
+        blockResult &= "\n"
+
+  return blockResult
+
+proc generateFunction(node: Node): string =
+  var code = ""
+
+  if node.funcName == "main":
+    code = "int main() {\n"
+  else:
+    code = "void " & node.funcName & "() {\n"
+
+  # Generate the function body (which is a block)
+  if node.body != nil:
+    code &= generateBlock(node.body, cgFunction)
+
+  if node.funcName == "main":
+    code &= "  return 0;\n"
+
+  code &= "}\n"
+  return code
+
+proc generateProgram(node: Node): string =
+  var
+    topLevelCode = ""
+    functionCode = ""
+    hasCMain = false
+    hasMicroGoMain = false
+
+  for funcNode in node.functions:
+    case funcNode.kind
+    of nkCBlock:
+      let cCode = generateCBlock(funcNode, cgGlobal)
+      topLevelCode &= cCode
+      if "int main()" in cCode:
+        hasCMain = true
+    of nkFunction:
+      functionCode &= generateFunction(funcNode)
+      if funcNode.funcName == "main":
+        hasMicroGoMain = true
+    else:
+      discard
+
+  result = topLevelCode & functionCode
+
+  # Add auto-generated main if none exists
+  if not hasCMain and not hasMicroGoMain:
+    result &= "\nint main() {\n"
+    result &= "  // Auto-generated entry point\n"
+    result &= "  return 0;\n"
+    result &= "}\n"
+
+# =========================== MAIN DISPATCH ============================
+proc generateC*(node: Node, context: string = "global"): string =
+  let cgContext =
     if context == "function":
-      result = "  " & callCode
+      cgFunction
+    elif context == "global":
+      cgGlobal
     else:
-      result = callCode
+      cgGlobal
+
+  case node.kind
+  of nkProgram:
+    generateProgram(node)
+  of nkPackage:
+    "// Package: " & node.packageName & "\n"
+  of nkFunction:
+    generateFunction(node)
+  of nkAssignment:
+    generateAssignment(node, cgContext)
+  of nkReturn:
+    generateReturn(node, cgContext)
+  of nkBlock:
+    generateBlock(node, cgContext)
+  of nkCBlock:
+    generateCBlock(node, cgContext)
+  of nkVarDecl:
+    generateVarDecl(node, cgContext)
+  of nkBinaryExpr:
+    generateExpression(node)
+  of nkIdentifier:
+    generateIdentifier(node)
+  of nkLiteral, nkStringLit:
+    generateLiteral(node)
+  of nkCall:
+    generateCall(node, cgContext)

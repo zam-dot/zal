@@ -97,9 +97,10 @@ proc scanIdentifier(source: string, i: var int, line, col: var int): Token =
     inc(i)
     inc(col)
 
-  let lexeme = source[start ..< i]
-  let kind = Keywords.getOrDefault(lexeme, tkIdent)
-  let tokenCol = col - lexeme.len
+  let
+    lexeme = source[start ..< i]
+    kind = Keywords.getOrDefault(lexeme, tkIdent)
+    tokenCol = col - lexeme.len
 
   createToken(kind, lexeme, line, tokenCol)
 
@@ -134,10 +135,11 @@ proc scanNumber(source: string, i: var int, line, col: var int): Token =
       inc(i)
       inc(col)
 
-  let lexeme = source[start ..< i]
-  let numVal = parseFloat(lexeme)
-  let tokenCol = col - lexeme.len
-  let kind = if isFloat: tkFloatLit else: tkIntLit
+  let
+    lexeme = source[start ..< i]
+    numVal = parseFloat(lexeme)
+    tokenCol = col - lexeme.len
+    kind = if isFloat: tkFloatLit else: tkIntLit
 
   createToken(kind, lexeme, line, tokenCol, true, "", numVal)
 
@@ -175,8 +177,9 @@ proc scanString(source: string, i: var int, line, col: var int): Token =
   if i < source.len and source[i] == '"':
     inc(i) # Skip closing quote
     inc(col)
-    let lexeme = source[start ..< i]
-    let tokenCol = col - lexeme.len
+    let
+      lexeme = source[start ..< i]
+      tokenCol = col - lexeme.len
     createToken(tkStringLit, lexeme, line, tokenCol, true, strVal)
   else:
     createToken(tkError, "Unterminated string", line, col)
@@ -202,8 +205,9 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
   inc(col)
 
   # Capture everything until matching }
-  var cCode = ""
-  var braceCount = 1 # We're inside the first {
+  var
+    cCode = ""
+    braceCount = 1 # We're inside the first {
   let startCol = col
 
   while i < source.len and braceCount > 0:

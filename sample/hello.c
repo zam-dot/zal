@@ -1,10 +1,13 @@
 #include <stdio.h>
-
-    int add(int a, int b) {
-        return a + b;
-    }
 int main() {
- int result = add(11, 22);
-  printf("%d\n", result);
-  return 0;
+    int x = 64;
+    if (x == 32) {
+        printf("x is %d\n", x);
+    } else if (x == 64) {
+        printf("x is %d\n", x);
+    } else {
+        printf("x is not 32 or 64\n");
+    }
+
+    return 0;
 }

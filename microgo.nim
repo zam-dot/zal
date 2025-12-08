@@ -20,7 +20,7 @@ proc formatCode(cCode: string, filename: string): string =
   writeFile(tmpFile, cCode)
 
   let formatResult = execShellCmd("clang-format -i " & tmpFile & " 2>/dev/null")
-  if formatResult != 0:
+  if formatResult == 0:
     result = readFile(tmpFile)
   else:
     result = cCode
@@ -34,10 +34,10 @@ proc compileWithGCC(cFilename: string, outputExe: string): bool =
   let theResult = execCmdEx(compileCmd)
 
   if theResult.exitCode == 0:
-    echo "✅ Compiled to: ", outputExe
+    echo "Compiled to: ", outputExe
     return true
   else:
-    echo "❌ Compilation failed:"
+    echo "Compilation failed:"
     echo theResult.output
     return false
 
@@ -46,7 +46,7 @@ proc compileFile(filename: string, compileToExecutabe: bool = true): bool =
   echo "Compiling ", filename, "..."
 
   if not fileExists(filename):
-    echo "❌ File not found: ", filename
+    echo "File not found: ", filename
     return false
 
   let

@@ -1,11 +1,13 @@
-@c {#include <stdio.h>
-
-    int add(int a, int b) {
-        return a + b;
-    }
-}
+@c {#include <stdio.h>}
 
 func main() {
-    @c { int result = add(11, 22); }
-    print("%d\n", result)
+    var x = 64
+
+    if x == 32 {
+        print("x is %d\n", x)
+    } else if x == 64 {
+        print("x is %d\n", x)
+    } else {
+        print("x is not 32 or 64\n")
+    }
 }

@@ -17,6 +17,8 @@ type NodeKind* = enum
   nkReturn
   nkCall
   nkBinaryExpr = "binary"
+  nkIf = "if"
+  nkElse = "else"
 
 type Node* = ref object
   kind*: NodeKind
@@ -26,6 +28,10 @@ type Node* = ref object
     functions*: seq[Node]
   of nkPackage:
     packageName*: string
+  of nkIf:
+    ifCondition*: Node
+    ifThen*: Node
+    ifElse*: Node # Can be nil
   of nkFunction:
     funcName*: string
     params*: seq[Node]
@@ -59,6 +65,19 @@ type Parser* = ref object
   tokens*: seq[Token]
   pos*: int
   current*: Token
+
+# =========================== FORWARD DECLARATIONS ============================
+proc parseIdentifier(p: Parser): Node
+proc parseLiteral(p: Parser): Node
+proc parseVarDecl(p: Parser): Node
+proc parseCall(p: Parser): Node
+proc parseBlock(p: Parser): Node
+proc parseFunction(p: Parser): Node
+proc parsePackage(p: Parser): Node
+proc parseCBlock(p: Parser): Node
+proc parsePrimary(p: Parser): Node
+proc parseExpression(p: Parser): Node
+proc parseIf(p: Parser): Node
 
 # =========================== PARSER UTILITIES ============================
 proc newParser*(tokens: seq[Token]): Parser =
@@ -158,27 +177,41 @@ proc parseExpression(p: Parser): Node =
   if left == nil:
     return nil
 
-  if p.current.kind == tkPlus:
-    let
-      op = p.current.lexeme
-      line = left.line
-      col = left.col
-
-    p.advance()
-
-    let right = parsePrimary(p)
-    if right == nil:
-      return left
-
-    return Node(
-      kind: nkBinaryExpr,
-      line: line,
-      col: col,
-      nodeKind: nkBinaryExpr,
-      left: left,
-      right: right,
-      op: op,
-    )
+  # Check for operators
+  while true:
+    case p.current.kind
+    of tkPlus:
+      let op = p.current.lexeme
+      p.advance()
+      let right = parsePrimary(p)
+      if right == nil:
+        break
+      left = Node(
+        kind: nkBinaryExpr,
+        line: left.line,
+        col: left.col,
+        nodeKind: nkBinaryExpr,
+        left: left,
+        right: right,
+        op: op,
+      )
+    of tkEq, tkNe, tkLt, tkGt, tkLe, tkGe: # ADD THESE
+      let op = p.current.lexeme
+      p.advance()
+      let right = parsePrimary(p)
+      if right == nil:
+        break
+      left = Node(
+        kind: nkBinaryExpr,
+        line: left.line,
+        col: left.col,
+        nodeKind: nkBinaryExpr,
+        left: left,
+        right: right,
+        op: op,
+      )
+    else:
+      break
 
   return left
 
@@ -274,6 +307,8 @@ proc parseStatement(p: Parser): Node =
     return parseCBlock(p)
   of tkPrint, tkIdent:
     return parseCall(p)
+  of tkIf: # ADD THIS
+    return parseIf(p)
   else:
     return nil
 
@@ -383,6 +418,48 @@ proc parseProgram*(p: Parser): Node =
 
   return
     Node(kind: nkProgram, line: 1, col: 1, nodeKind: nkProgram, functions: allNodes)
+
+# =========================== CONTROL FLOW PARSERS ============================
+proc parseIf(p: Parser): Node =
+  let
+    line = p.current.line
+    col = p.current.col
+
+  if not p.expect(tkIf):
+    return nil
+
+  # Parse condition
+  let condition = parseExpression(p)
+  if condition == nil:
+    echo "Error: Expected condition after 'if' at line ", line, ":", col
+    return nil
+
+  # Parse then block
+  let thenBlock = parseBlock(p)
+  if thenBlock == nil:
+    echo "Error: Expected block after if condition at line ", line, ":", col
+    return nil
+
+  # Check for else
+  var elseBlock: Node = nil
+  if p.current.kind == tkElse: # This will now work
+    p.advance()
+    if p.current.kind == tkIf:
+      elseBlock = parseIf(p) # else if
+    else:
+      elseBlock = parseBlock(p)
+      if elseBlock == nil:
+        echo "Error: Expected block after 'else' at line ", line, ":", col
+
+  return Node(
+    kind: nkIf,
+    line: line,
+    col: col,
+    nodeKind: nkIf,
+    ifCondition: condition,
+    ifThen: thenBlock,
+    ifElse: elseBlock,
+  )
 
 # =========================== AST PRINTING ============================
 proc printAst*(node: Node, indent: int = 0) =

@@ -33,7 +33,12 @@ proc escapeString(str: string): string =
     else:
       result &= ch
 
-# =========================== NODE GENERATORS ============================
+# =========================== FORWARD DECLARATIONS ============================
+proc generateExpression(node: Node): string
+proc generateBlock(node: Node, context: CodegenContext): string
+proc generateIf(node: Node, context: CodegenContext): string
+
+# =========================== BASIC EXPRESSION GENERATORS ============================
 proc generateLiteral(node: Node): string =
   case node.kind
   of nkLiteral:
@@ -57,6 +62,7 @@ proc generateExpression(node: Node): string =
   else:
     ""
 
+# =========================== STATEMENT GENERATORS ============================
 proc generateCBlock(node: Node, context: CodegenContext): string =
   var cCode = node.cCode.strip(leading = false, trailing = true)
 
@@ -142,6 +148,36 @@ proc generateReturn(node: Node, context: CodegenContext): string =
   code &= ";\n"
   return indentLine(code, context)
 
+proc generateIf(node: Node, context: CodegenContext): string =
+  var code = "if (" & generateExpression(node.ifCondition) & ") {\n"
+
+  # Generate the then block
+  let thenCode = generateBlock(node.ifThen, context)
+  # Add indentation to each line of the then block
+  for line in thenCode.splitLines:
+    if line.len > 0:
+      code &= "  " & line & "\n"
+
+  code &= "}"
+
+  # Handle else/else if
+  if node.ifElse != nil:
+    code &= " else "
+    if node.ifElse.kind == nkIf:
+      # else if - recursively generate
+      code &= generateIf(node.ifElse, context)
+    else:
+      # else block
+      code &= "{\n"
+      let elseCode = generateBlock(node.ifElse, context)
+      for line in elseCode.splitLines:
+        if line.len > 0:
+          code &= "  " & line & "\n"
+      code &= "}"
+
+  code &= "\n"
+  return indentLine(code, context)
+
 proc generateBlock(node: Node, context: CodegenContext): string =
   if node == nil:
     return ""
@@ -161,6 +197,8 @@ proc generateBlock(node: Node, context: CodegenContext): string =
       stmtCode = generateVarDecl(stmt, context)
     of nkCall:
       stmtCode = generateCall(stmt, context)
+    of nkIf:
+      stmtCode = generateIf(stmt, context)
     else:
       continue # Skip unsupported statement types
 
@@ -171,6 +209,7 @@ proc generateBlock(node: Node, context: CodegenContext): string =
 
   return blockResult
 
+# =========================== STRUCTURE GENERATORS ============================
 proc generateFunction(node: Node): string =
   var code = ""
 
@@ -254,3 +293,7 @@ proc generateC*(node: Node, context: string = "global"): string =
     generateLiteral(node)
   of nkCall:
     generateCall(node, cgContext)
+  of nkIf:
+    generateIf(node, cgContext)
+  of nkElse:
+    ""

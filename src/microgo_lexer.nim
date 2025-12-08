@@ -8,6 +8,7 @@ type
     tkFor = "for"
     tkFunc = "func"
     tkIf = "if"
+    tkElse = "else"
     tkImport = "import"
     tkInterface = "interface"
     tkPackage = "package"
@@ -30,6 +31,15 @@ type
     tkDot = "."
     tkSemicolon = ";"
     tkPlus = "+"
+    tkMinus = "-"
+    tkStar = "*"
+    tkSlash = "/"
+    tkEq = "==" # Add these
+    tkNe = "!="
+    tkLt = "<"
+    tkGt = ">"
+    tkLe = "<="
+    tkGe = ">="
 
     # Brackets
     tkLParen = "("
@@ -58,6 +68,7 @@ const Keywords = {
   "for": tkFor,
   "func": tkFunc,
   "if": tkIf,
+  "else": tkElse,
   "import": tkImport,
   "interface": tkInterface,
   "package": tkPackage,
@@ -261,9 +272,41 @@ proc lex*(source: string): seq[Token] =
         inc(i)
         inc(col)
     of '=':
-      tokens.add(createToken(tkAssign, "=", line, col))
-      inc(i)
-      inc(col)
+      if i + 1 < source.len and source[i + 1] == '=':
+        tokens.add(createToken(tkEq, "==", line, col))
+        inc(i, 2)
+        inc(col, 2)
+      else:
+        tokens.add(createToken(tkAssign, "=", line, col))
+        inc(i)
+        inc(col)
+    of '!':
+      if i + 1 < source.len and source[i + 1] == '=':
+        tokens.add(createToken(tkNe, "!=", line, col))
+        inc(i, 2)
+        inc(col, 2)
+      else:
+        tokens.add(createToken(tkError, "Unexpected character: !", line, col))
+        inc(i)
+        inc(col)
+    of '<':
+      if i + 1 < source.len and source[i + 1] == '=':
+        tokens.add(createToken(tkLe, "<=", line, col))
+        inc(i, 2)
+        inc(col, 2)
+      else:
+        tokens.add(createToken(tkLt, "<", line, col))
+        inc(i)
+        inc(col)
+    of '>':
+      if i + 1 < source.len and source[i + 1] == '=':
+        tokens.add(createToken(tkGe, ">=", line, col))
+        inc(i, 2)
+        inc(col, 2)
+      else:
+        tokens.add(createToken(tkGt, ">", line, col))
+        inc(i)
+        inc(col)
     of '+':
       tokens.add(createToken(tkPlus, "+", line, col))
       inc(i)

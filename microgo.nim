@@ -7,16 +7,16 @@ import std/[os, osproc, strutils]
 proc compileFile(filename: string) =
   echo "Compiling ", filename, "..."
 
-  let source = readFile(filename)
-  let tokens = lex(source)
-  let parser = newParser(tokens)
-  let ast = parseProgram(parser)
+  let
+    source = readFile(filename)
+    tokens = lex(source)
+    parser = newParser(tokens)
+    ast = parseProgram(parser)
 
   if ast == nil:
     echo "Compilation failed!"
     quit(1)
 
-  # Generate C code - no need to add main function separately anymore
   let cCode = generateC(ast)
 
   # Create output filename: change .mg to .c

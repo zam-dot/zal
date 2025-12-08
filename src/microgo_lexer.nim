@@ -1,9 +1,8 @@
-# microgo_lexer.nim - FIXED VERSION
+# microgo_lexer.nim 
 import std/[strutils, tables]
 
 type
   TokenKind* = enum
-    # Our 10 Go-inspired keywords (alphabetical)
     tkFor = "for"
     tkFunc = "func"
     tkIf = "if"
@@ -43,12 +42,12 @@ type
 
   Token* = ref object
     kind*: TokenKind
-    lexeme*: string # The actual text
-    line*, col*: int # For error messages
+    lexeme*: string
+    line*, col*: int
     case isLiteral*: bool
     of true:
-      strVal*: string # For string literals
-      numVal*: float # For numeric literals
+      strVal*: string
+      numVal*: float
     else:
       discard
 
@@ -68,10 +67,12 @@ const Keywords = {
 }.toTable
 
 proc lex*(source: string): seq[Token] =
-  var tokens: seq[Token]
-  var i = 0
-  var line = 1
-  var col = 1
+  var
+    tokens: seq[Token]
+    i = 0
+    line = 1
+    col = 1
+
   let n = source.len
 
   proc peek(offset: int = 0): char =
@@ -120,8 +121,9 @@ proc lex*(source: string): seq[Token] =
 
     # ============ NUMBERS ============
     of '0' .. '9':
-      var start = i
-      var isFloat = false
+      var
+        start = i
+        isFloat = false
 
       # Integer part
       while i < n and peek() in {'0' .. '9'}:
@@ -143,8 +145,9 @@ proc lex*(source: string): seq[Token] =
         while i < n and peek() in {'0' .. '9'}:
           advance()
 
-      let lexeme = source[start ..< i]
-      let numVal = parseFloat(lexeme)
+      let
+        lexeme = source[start ..< i]
+        numVal = parseFloat(lexeme)
 
       tokens.add(
         Token(
@@ -236,8 +239,9 @@ proc lex*(source: string): seq[Token] =
         advance()
 
         # Now capture everything until matching }
-        var cCode = ""
-        var braceCount = 1 # We're inside the first {
+        var
+          cCode = ""
+          braceCount = 1 # We're inside the first {
 
         while i < n and braceCount > 0:
           let ch = peek()

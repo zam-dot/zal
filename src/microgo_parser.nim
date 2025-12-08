@@ -1,4 +1,4 @@
-# microgo_parser.nim - COMPLETE FIXED VERSION
+# microgo_parser.nim
 import microgo_lexer
 import strutils
 
@@ -136,9 +136,10 @@ proc parseCBlock(p: Parser): Node =
   if p.current.kind != tkCBlock:
     return nil
 
-  let line = p.current.line
-  let col = p.current.col
-  let cCode = p.current.lexeme
+  let
+    line = p.current.line
+    col = p.current.col
+    cCode = p.current.lexeme
 
   p.advance()
   return Node(kind: nkCBlock, line: line, col: col, nodeKind: nkCBlock, cCode: cCode)
@@ -146,8 +147,9 @@ proc parseCBlock(p: Parser): Node =
 proc parseCall(p: Parser): Node =
   echo "DEBUG PARSER: parseCall called, token=",
     p.current.kind, " '", p.current.lexeme, "'"
-  let line = p.current.line
-  let col = p.current.col
+  let
+    line = p.current.line
+    col = p.current.col
 
   if p.current.kind notin {tkPrint, tkIdent}:
     echo "  -> Not a call (not print or ident)"
@@ -167,15 +169,15 @@ proc parseCall(p: Parser): Node =
     if p.current.kind == tkIdent:
       args.add(parseIdentifier(p))
     elif p.current.kind in {tkStringLit, tkIntLit, tkFloatLit}:
-      args.add(parseLiteral(p)) # ⬅️ This should capture string/number args!
+      args.add(parseLiteral(p))
 
   # In parseCall, fix the argument parsing:
   while p.current.kind == tkComma:
     p.advance()
     if p.current.kind == tkIdent:
-      args.add(parseIdentifier(p)) # ⬅️ ADD, not discard!
+      args.add(parseIdentifier(p))
     elif p.current.kind in {tkStringLit, tkIntLit, tkFloatLit}:
-      args.add(parseLiteral(p)) # ⬅️ Also handle literals after comma!
+      args.add(parseLiteral(p))
 
   if not p.expect(tkRParen):
     echo "Error: Expected ')' at line ", line, ":", col
@@ -226,8 +228,9 @@ proc parseExpression(p: Parser): Node =
   return left
 
 proc parseVarDecl(p: Parser): Node =
-  let line = p.current.line
-  let col = p.current.col
+  let
+    line = p.current.line
+    col = p.current.col
 
   if not p.expect(tkVar):
     return nil
@@ -261,8 +264,9 @@ proc parseBlock(p: Parser): Node =
   if not p.expect(tkLBrace):
     return nil
 
-  let line = p.current.line
-  let col = p.current.col
+  let
+    line = p.current.line
+    col = p.current.col
   var statements: seq[Node] = @[]
 
   while p.current.kind != tkRBrace and p.current.kind != tkEOF:
@@ -288,8 +292,9 @@ proc parseBlock(p: Parser): Node =
     Node(kind: nkBlock, line: line, col: col, nodeKind: nkBlock, statements: statements)
 
 proc parseFunction(p: Parser): Node =
-  let line = p.current.line
-  let col = p.current.col
+  let
+    line = p.current.line
+    col = p.current.col
 
   if not p.expect(tkFunc):
     return nil
@@ -322,8 +327,9 @@ proc parseFunction(p: Parser): Node =
   )
 
 proc parsePackage(p: Parser): Node =
-  let line = p.current.line
-  let col = p.current.col
+  let
+    line = p.current.line
+    col = p.current.col
 
   if not p.expect(tkPackage):
     return nil
@@ -360,13 +366,8 @@ proc parseProgram*(p: Parser): Node =
     else:
       p.advance()
 
-  return Node(
-    kind: nkProgram,
-    line: 1,
-    col: 1,
-    nodeKind: nkProgram,
-    functions: allNodes, # Contains both C blocks and functions
-  )
+  return
+    Node(kind: nkProgram, line: 1, col: 1, nodeKind: nkProgram, functions: allNodes)
 
 # AST Printing
 proc printAst*(node: Node, indent: int = 0) =

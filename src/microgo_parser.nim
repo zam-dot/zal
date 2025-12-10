@@ -57,6 +57,7 @@ type Node* = ref object
     varValue*: Node
   of nkConstDecl:
     constName*: string
+    constType*: string
     constValue*: Node
   of nkAssignment:
     target*: Node
@@ -479,6 +480,35 @@ proc parseConstDecl(p: Parser): Node =
     echo "Error: Expected identifier after 'const' at line ", line, ":", col
     return nil
 
+  var constType = "" # Will remain empty if no type annotation
+
+  # ✅ FIX: Check for optional type annotation
+  if p.current.kind == tkColon:
+    p.advance() # Skip ':'
+
+    # Parse type
+    case p.current.kind
+    of tkIntType:
+      constType = "int"
+      p.advance()
+    of tkFloatType:
+      constType = "double" # C uses double for float
+      p.advance()
+    of tkStringType:
+      constType = "char*"
+      p.advance()
+    of tkBoolType:
+      constType = "bool"
+      p.advance()
+    of tkIdent:
+      # Custom type
+      let typeIdent = parseIdentifier(p)
+      if typeIdent != nil:
+        constType = typeIdent.identName
+    else:
+      echo "Error: Expected type after ':' at line ", p.current.line, ":", p.current.col
+      return nil
+
   if not p.expectOrError(tkAssign, "Expected '=' after constant name"):
     return nil
 
@@ -493,6 +523,7 @@ proc parseConstDecl(p: Parser): Node =
     col: col,
     nodeKind: nkConstDecl,
     constName: ident.identName,
+    constType: constType,
     constValue: value,
   )
 

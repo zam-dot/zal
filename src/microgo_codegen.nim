@@ -149,21 +149,30 @@ proc generateConstDecl(node: Node, context: CodegenContext): string =
     constExpr = "0"
     constType = "int"
 
-  case node.constValue.kind
-  of nkLiteral:
-    if node.constValue.literalValue.contains('.'):
-      constExpr = node.constValue.literalValue
-      constType = "double"
-    else:
-      constExpr = node.constValue.literalValue
-      constType = "int"
-  of nkStringLit:
-    constExpr = "\"" & escapeString(node.constValue.literalValue) & "\""
-    constType = "char*" # Just char*, not const char*
-  of nkIdentifier:
-    constExpr = node.constValue.identName
+  # ✅ USE THE EXPLICIT TYPE IF PROVIDED
+  if node.constType.len > 0:
+    constType = node.constType
   else:
-    discard
+    # Infer from value if no explicit type
+    case node.constValue.kind
+    of nkLiteral:
+      if node.constValue.literalValue.contains('.'):
+        constExpr = node.constValue.literalValue
+        constType = "double"
+      else:
+        constExpr = node.constValue.literalValue
+        constType = "int"
+    of nkStringLit:
+      constExpr = "\"" & escapeString(node.constValue.literalValue) & "\""
+      constType = "char*"
+    of nkIdentifier:
+      constExpr = node.constValue.identName
+    else:
+      discard
+
+  # Generate constExpr from value
+  if constExpr == "0": # Only if we didn't set it above
+    constExpr = generateExpression(node.constValue)
 
   if context == cgFunction:
     var code = "const " & constType & " " & node.constName & " = " & constExpr & ";\n"

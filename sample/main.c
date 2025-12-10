@@ -1,4 +1,5 @@
 #include <stdio.h>
+#define PI 3.14
 int add(int a, int b) { return a + b; }
 int sub(int a, int b) { return a - b; }
 int mul(int a, int b) { return a * b; }
@@ -13,9 +14,12 @@ int main() {
     }
     int i = 9;
     if ((i % 2 == 0)) {
-        printf("i % 2 = %d\n", i % 2);
+        printf("i \\ 2 = %d\n", i % 2);
     } else {
-        printf("i % 2 = %d\n", i % 2);
+        printf("i \\ 2 = %d\n", i % 2);
     }
+    printf("number = %.2lf\n", PI);
+    const char *myName = "HOla Pedor";
+    printf("myName = %s\n", myName);
     return 0;
 }

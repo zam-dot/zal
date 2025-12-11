@@ -4,11 +4,83 @@ import src/microgo_parser
 import src/microgo_codegen
 import std/[os, osproc, strutils]
 
+# ======================== RESOLVE IMPORTS ==============================
+proc resolveImports(source: string, baseDir: string): string =
+  var
+    output = ""
+    inCBlock = false
+    i = 0
+  let lines = source.splitLines()
+
+  while i < lines.len:
+    let
+      line = lines[i]
+      trimmed = line.strip()
+
+    # Skip completely empty lines in source
+    if trimmed.len == 0:
+      inc(i)
+      continue
+
+    # Track if we're inside @c { ... }
+    if trimmed.startsWith("@c") and "{" in trimmed:
+      inCBlock = true
+      output &= line & "\n"
+    elif inCBlock and trimmed == "}":
+      inCBlock = false
+      output &= line & "\n"
+    elif not inCBlock and trimmed.startsWith("@include"):
+      # Process include OUTSIDE @c block
+      let parts = trimmed.splitWhitespace(maxSplit = 1)
+      if parts.len >= 2:
+        var filename = parts[1].strip()
+        filename = filename.strip(chars = {'"', '\''})
+
+        let fullPath = baseDir / filename
+        if fileExists(fullPath):
+          let
+            included = readFile(fullPath)
+            includedDir = fullPath.parentDir()
+            resolved = resolveImports(included, includedDir)
+
+          # Add the included content WITHOUT extra blank lines
+          if resolved.strip().len > 0:
+            output &= resolved.strip() & "\n\n"
+        else:
+          echo "ERROR: @include file not found: ", fullPath
+          output &= line & "\n"
+    else:
+      # Regular line
+      output &= line & "\n"
+
+    inc(i)
+
+  return output.strip() & "\n"
+
 # ======================== COMPILE TO C CODE =============================
-proc compileToC(source: string): string =
-  let tokens = lex(source)
-  let parser = newParser(tokens)
-  let ast = parseProgram(parser)
+proc compileToC(source: string, filename: string = ""): string =
+  # Resolve imports before compiling
+  let baseDir =
+    if filename.len > 0:
+      filename.parentDir()
+    else:
+      getCurrentDir()
+
+  # echo "=== BEFORE resolveImports ==="
+  # echo source
+  # echo "============================="
+
+  let resolvedSource = resolveImports(source, baseDir)
+
+  # echo "=== AFTER resolveImports ==="
+  # echo resolvedSource
+  # echo "============================"
+
+  # Then compile as normal
+  let
+    tokens = lex(resolvedSource)
+    parser = newParser(tokens)
+    ast = parseProgram(parser)
 
   if ast == nil:
     raise newException(ValueError, "Parsing failed!")
@@ -30,8 +102,9 @@ proc formatCode(cCode: string, filename: string): string =
 
 # ========================== RUN WITH TCC ===============================
 proc compileAndRun(cFilename: string): bool =
-  let cmd = "tcc -run " & cFilename & " 2>&1"
-  let theResult = execCmdEx(cmd)
+  let
+    cmd = "tcc -run " & cFilename & " 2>&1"
+    theResult = execCmdEx(cmd)
 
   if theResult.exitCode == 0:
     echo "✅ Program output:"
@@ -52,7 +125,7 @@ proc compileFile(filename: string, runImmediately: bool = true): bool =
 
   let
     source = readFile(filename)
-    cCode = compileToC(source)
+    cCode = compileToC(source, filename)
 
   var baseName = filename
   if filename.endsWith(".mg"):

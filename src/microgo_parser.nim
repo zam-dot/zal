@@ -72,22 +72,22 @@ type Node* = ref object
     identName*: string
   of nkLiteral, nkStringLit:
     literalValue*: string
-  of nkCall, nkReturn: # <-- Both share the same fields
+  of nkCall, nkReturn:
     callFunc*: string
     callArgs*: seq[Node]
     target*: Node
-  of nkFieldAccess: # <--- ADD THIS BRANCH
+  of nkFieldAccess:
     base*: Node
     field*: Node
-  of nkStructLiteral: # <--- ADD THIS BLOCK
+  of nkStructLiteral:
     structType*: string
     fieldValues*: seq[Node]
   of nkArrayLit:
-    elements*: seq[Node] # The array elements
-  of nkArrayType: # Add this for later
+    elements*: seq[Node]
+  of nkArrayType:
     elemType*: string
     size*: Node
-  of nkFor: # <-- Update this block
+  of nkFor:
     forInit*: Node
     forCondition*: Node
     forUpdate*: Node
@@ -112,21 +112,10 @@ proc getPrecedence(kind: TokenKind): int =
   else: 0
 
 # =========================== FORWARD DECLARATIONS ============================
-proc parseIdentifier(p: Parser): Node
-proc parseLiteral(p: Parser): Node
-proc parseConstDecl(p: Parser): Node
-proc parseArrayLiteral(p: Parser): Node
-proc parseCall(p: Parser): Node
-proc parseBlock(p: Parser): Node
-proc parseFunction(p: Parser): Node
 proc parseReturn(p: Parser): Node
-proc parseCBlock(p: Parser): Node {.used.}
-proc parseCallStatement(p: Parser): Node {.used.}
-proc parseVarDecl(p: Parser): Node {.used.}
 proc parsePrimary(p: Parser): Node
-proc parseExpression(p: Parser, minPrecedence: int = 0): Node # UPDATED
+proc parseExpression(p: Parser, minPrecedence: int = 0): Node
 proc parseFor(p: Parser): Node
-proc parseVarDeclNoSemi(p: Parser): Node
 proc parseIf(p: Parser): Node
 proc parseAssignmentStatement(p: Parser): Node
 
@@ -256,10 +245,10 @@ proc parseExpression(p: Parser, minPrecedence: int = 0): Node =
     # Regular binary operators (left-associative)
     if currPrec > 0:
       let op = curr.lexeme
-      p.advance() # Skip operator
+      p.advance()
 
       # Parse right side with higher precedence
-      let right = parseExpression(p, currPrec + 1) # Note: +1 for left-associative
+      let right = parseExpression(p, currPrec + 1)
       if right == nil:
         break
 
@@ -384,7 +373,6 @@ proc parseArrayLiteral(p: Parser): Node =
   )
 
 # =========================== STRUCT PARSER ============================
-# microgo_parser.nim - Add parseStruct proc
 proc parseStruct(p: Parser): Node =
   let line = p.current.line
   let col = p.current.col
@@ -445,7 +433,6 @@ proc parseStruct(p: Parser): Node =
       fieldType = "bool"
       p.advance()
     of tkIdent:
-      # Custom type (another struct, etc.)
       let typeIdent = parseIdentifier(p)
       if typeIdent != nil:
         fieldType = typeIdent.identName
@@ -455,10 +442,8 @@ proc parseStruct(p: Parser): Node =
 
     # Create field nodes (one per name)
     for fieldName in fieldNames:
-      # We'll need a new node type for struct fields
-      # For now, reuse nkVarDecl or create nkField
       let fieldNode = Node(
-        kind: nkVarDecl, # Temporary - we'll need nkField
+        kind: nkVarDecl,
         line: line,
         col: col,
         nodeKind: nkVarDecl,
@@ -479,23 +464,22 @@ proc parseStruct(p: Parser): Node =
 
   # Create struct node - need new node type nkStruct
   return Node(
-    kind: nkStruct, # The Kind
+    kind: nkStruct,
     line: line,
     col: col,
-    nodeKind: nkStruct, # The Discriminator
-    # Use the new fields:
+    nodeKind: nkStruct,
     structName: nameIdent.identName, # Store name
     fields: fields, # Store fields
   )
 
 proc parseStructLiteral(p: Parser, structName: string): Node =
-  let line = p.current.line
-  let col = p.current.col
+  let
+    line = p.current.line
+    col = p.current.col
   p.advance() # Skip '{'
 
   var fieldValues: seq[Node]
   while p.current.kind != tkRBrace:
-    # Parse field name (e.g., 'x')
     let fieldName = parseIdentifier(p)
     if fieldName == nil:
       echo "Error: Expected field name in struct literal."
@@ -548,7 +532,7 @@ proc parseCall(p: Parser): Node =
     col = p.current.col
 
   # Accept print, getmem, freemem, and regular identifiers
-  if p.current.kind notin {tkPrint, tkGetMem, tkFreeMem, tkIdent}: # UPDATED
+  if p.current.kind notin {tkPrint, tkGetMem, tkFreeMem, tkIdent}:
     return nil
 
   let funcName = p.current.lexeme
@@ -575,20 +559,19 @@ proc parseCall(p: Parser): Node =
 proc parseCallStatement(p: Parser): Node =
   ## Parse a function call that's a statement (ends with semicolon)
   ## Examples: print("hello");  add(2, 3);
-  let callNode = parseCall(p) # Parse the actual call
+  let callNode = parseCall(p)
   if callNode != nil:
-    # Expect semicolon for statements
     discard p.expect(tkSemicolon)
   return callNode
 
-# microgo_parser.nim - UPDATED parseCallExpr
+# =========================== CALL EXPRESSION PARSER ===========================
 proc parseCallExpr(p: Parser): Node =
   let
     line = p.current.line
     col = p.current.col
 
   # Accept identifiers AND the new getmem/freemem tokens
-  if p.current.kind notin {tkIdent, tkPrint, tkGetMem, tkFreeMem}: # UPDATED
+  if p.current.kind notin {tkIdent, tkPrint, tkGetMem, tkFreeMem}:
     return nil
 
   let funcName = p.current.lexeme
@@ -613,23 +596,16 @@ proc parseCallExpr(p: Parser): Node =
 
 # =========================== PRIMARY PARSER ============================
 proc parsePrimary(p: Parser): Node =
-  echo "DEBUG parsePrimary: token=", p.current.kind, " lexeme='", p.current.lexeme, "'"
   case p.current.kind
-  # ==================== IDENTIFIERS & FUNCTION CALLS ====================
   of tkIdent, tkPrint, tkGetMem, tkFreeMem:
-    echo "  DEBUG: It's an identifier/function. Next token=", p.peek(1).kind
-
-    # 1. Check for Struct Literal (e.g., Point{...})
     if p.peek(1).kind == tkLBrace:
       let structName = p.current.lexeme
-      p.advance() # Skip the type identifier (Point)
+      p.advance()
       return parseStructLiteral(p, structName)
 
     if p.peek(1).kind == tkLParen:
-      echo "  DEBUG: Next is '(' - calling parseCallExpr"
       return parseCallExpr(p)
     else:
-      echo "  DEBUG: Next is not '(' - calling parseIdentifier"
       # Parse identifier
       let base = parseIdentifier(p)
       if base != nil:
@@ -671,7 +647,6 @@ proc parsePrimary(p: Parser): Node =
 
   # ==================== ARRAY LITERALS ====================
   of tkLBracket: # Array literal: [1, 2, 3]
-    echo "  DEBUG: Array literal start"
     return parseArrayLiteral(p)
 
   # ==================== LITERALS ====================
@@ -680,11 +655,12 @@ proc parsePrimary(p: Parser): Node =
 
   # ==================== PARENTHESES ====================
   of tkLParen:
-    let line = p.current.line
-    let col = p.current.col
+    let
+      line = p.current.line
+      col = p.current.col
     p.advance() # Skip '('
 
-    let expr = parseExpression(p) # The expression inside the parentheses
+    let expr = parseExpression(p)
     if expr == nil:
       echo "Error: Expected expression inside parentheses"
       return nil
@@ -734,14 +710,15 @@ proc parsePrimary(p: Parser): Node =
         right: index,
       )
 
-    return baseNode # Return the Group node if no field access followed
+    return baseNode
 
   # ==================== UNARY OPERATORS ====================
-  of tkMinus, tkPlus: # Unary operators
-    let op = p.current.lexeme
-    let line = p.current.line
-    let col = p.current.col
-    p.advance() # Skip unary operator
+  of tkMinus, tkPlus:
+    let
+      op = p.current.lexeme
+      line = p.current.line
+      col = p.current.col
+    p.advance()
 
     let operand = parsePrimary(p)
     if operand == nil:
@@ -768,7 +745,6 @@ proc parsePrimary(p: Parser): Node =
 
   # ==================== DEFAULT CASE ====================
   else:
-    # Not a primary expression
     return nil
 
 # =========================== STATEMENT VAR DECL ============================
@@ -798,7 +774,7 @@ proc parseVarDecl(p: Parser): Node =
       varType = "int"
       p.advance()
     of tkFloatType:
-      varType = "double" # C uses double for float
+      varType = "double"
       p.advance()
     of tkStringType:
       varType = "char*"
@@ -807,7 +783,6 @@ proc parseVarDecl(p: Parser): Node =
       varType = "bool"
       p.advance()
     of tkIdent:
-      # Custom type (like user-defined)
       let typeIdent = parseIdentifier(p)
       if typeIdent != nil:
         varType = typeIdent.identName
@@ -820,7 +795,7 @@ proc parseVarDecl(p: Parser): Node =
     return nil
 
   # Parse the value
-  let value = parseExpression(p) # This should already be parseExpression!
+  let value = parseExpression(p)
   if value == nil:
     echo "Error: Expected expression at line ", p.current.line, ":", p.current.col
     return nil
@@ -849,9 +824,8 @@ proc parseConstDecl(p: Parser): Node =
     echo "Error: Expected identifier after 'const' at line ", line, ":", col
     return nil
 
-  var constType = "" # Will remain empty if no type annotation
+  var constType = ""
 
-  # ✅ FIX: Check for optional type annotation
   if p.current.kind == tkColon:
     p.advance() # Skip ':'
 
@@ -861,7 +835,7 @@ proc parseConstDecl(p: Parser): Node =
       constType = "int"
       p.advance()
     of tkFloatType:
-      constType = "double" # C uses double for float
+      constType = "double"
       p.advance()
     of tkStringType:
       constType = "char*"
@@ -870,7 +844,6 @@ proc parseConstDecl(p: Parser): Node =
       constType = "bool"
       p.advance()
     of tkIdent:
-      # Custom type
       let typeIdent = parseIdentifier(p)
       if typeIdent != nil:
         constType = typeIdent.identName
@@ -950,7 +923,6 @@ proc parseVarDeclNoSemi(p: Parser): Node =
     echo "Error: Expected expression at line ", p.current.line, ":", p.current.col
     return nil
 
-  # DON'T consume semicolon here - it will be consumed by the for loop parser
   return Node(
     kind: nkVarDecl,
     line: line,
@@ -969,7 +941,7 @@ proc parseStatement(p: Parser): Node =
     if callNode != nil and p.current.kind == tkSemicolon:
       p.advance()
     return callNode
-  of tkGetMem, tkFreeMem: # ⭐⭐ ADD THIS CASE! ⭐⭐
+  of tkGetMem, tkFreeMem:
     # Handle getmem/freemem as function calls
     let callNode = parseCall(p)
     if callNode != nil and p.current.kind == tkSemicolon:
@@ -1012,8 +984,7 @@ proc parseBlock(p: Parser): Node =
     if stmt != nil:
       statements.add(stmt)
     else:
-      p.advance() # Skip unexpected token
-
+      p.advance()
   if not p.expectOrError(tkRBrace, "Expected '}'"):
     return nil
 
@@ -1041,7 +1012,6 @@ proc parseFunction(p: Parser): Node =
 
   # Check if there are ANY parameters (not empty)
   if p.current.kind != tkRParen:
-    # PARSE FIRST PARAMETER
     let paramName = parseIdentifier(p)
     if paramName == nil:
       echo "Error: Expected parameter name"
@@ -1096,7 +1066,6 @@ proc parseFunction(p: Parser): Node =
         echo "Error: Expected parameter name after comma"
         return nil
 
-      # ✅ FIXED: Expect colon for type annotation
       if not p.expectOrError(tkColon, "Expected ':' after parameter name"):
         return nil
 
@@ -1141,8 +1110,34 @@ proc parseFunction(p: Parser): Node =
     return nil
 
   # Parse return type (optional, defaults to void)
-  var returnType = "void" # Default
-  if p.current.kind in {tkIdent, tkIntType, tkFloatType, tkStringType, tkBoolType}:
+  var returnType = "void"
+
+  # Check for optional colon before return type
+  if p.current.kind == tkColon:
+    p.advance() # Skip ':'
+
+    # Now parse the type
+    case p.current.kind
+    of tkIntType:
+      returnType = "int"
+      p.advance()
+    of tkFloatType:
+      returnType = "double"
+      p.advance()
+    of tkStringType:
+      returnType = "char*"
+      p.advance()
+    of tkBoolType:
+      returnType = "bool"
+      p.advance()
+    of tkIdent:
+      let returnTypeIdent = parseIdentifier(p)
+      if returnTypeIdent != nil:
+        returnType = returnTypeIdent.identName
+    else:
+      echo "Warning: Expected return type after ':'"
+  elif p.current.kind in {tkIdent, tkIntType, tkFloatType, tkStringType, tkBoolType}:
+    # Old style without colon (backward compatibility)
     case p.current.kind
     of tkIntType:
       returnType = "int"
@@ -1180,7 +1175,6 @@ proc parseFunction(p: Parser): Node =
   )
 
 # =========================== PACKAGE PARSER ============================
-# Add to microgo_parser.nim after parseStatement proc
 proc parseReturn(p: Parser): Node =
   let
     line = p.current.line
@@ -1214,12 +1208,12 @@ proc parseTopLevel(p: Parser): Node =
     return parseFunction(p)
   of tkCBlock:
     return parseCBlock(p)
-  of tkConst: # Handle global constants
+  of tkConst:
     return parseConstDecl(p)
-  of tkVar: # Handle global variables (optional)
+  of tkVar:
     return parseVarDecl(p)
-  of tkStruct: # <-- MISSING CASE
-    return parseStruct(p) # <-- ADD THIS LINE
+  of tkStruct:
+    return parseStruct(p)
   else:
     return nil
 
@@ -1233,7 +1227,7 @@ proc parseProgram*(p: Parser): Node =
     if node != nil:
       allNodes.add(node)
     else:
-      p.advance() # Skip unexpected token
+      p.advance()
 
   return
     Node(kind: nkProgram, line: 1, col: 1, nodeKind: nkProgram, functions: allNodes)
@@ -1254,30 +1248,24 @@ proc parseFor(p: Parser): Node =
   # Parse initialization (optional)
   var init: Node = nil
   if p.current.kind == tkSemicolon:
-    # Empty init
     p.advance()
   elif p.current.kind == tkVar:
-    # Variable declaration - use parseVarDeclNoSemi
     init = parseVarDeclNoSemi(p)
-    # Now consume the semicolon
     if not p.expect(tkSemicolon):
       echo "Error: Expected ';' after for init at line ", line, ":", col
       return nil
   else:
-    # Could be an expression (like i = 0)
     init = parseExpression(p)
     if init != nil:
       if not p.expect(tkSemicolon):
         echo "Error: Expected ';' after for init at line ", line, ":", col
         return nil
     else:
-      # Empty init
       discard p.expect(tkSemicolon)
 
   # Parse condition (optional)
   var condition: Node = nil
   if p.current.kind == tkSemicolon:
-    # Empty condition
     p.advance()
   else:
     condition = parseExpression(p)
@@ -1286,18 +1274,15 @@ proc parseFor(p: Parser): Node =
         echo "Error: Expected ';' after for condition at line ", line, ":", col
         return nil
     else:
-      # Empty condition
       discard p.expect(tkSemicolon)
 
   # Parse update (optional)
   var update: Node = nil
   if p.current.kind == tkRParen:
-    # Empty update - do nothing, closing paren will be consumed below
     discard
   else:
     update = parseExpression(p)
     if update == nil:
-      # Empty update is allowed
       discard
 
   # EXPECT CLOSING PAREN
@@ -1323,23 +1308,21 @@ proc parseFor(p: Parser): Node =
 
 # =========================== ASSIGNMENT PARSER ============================
 proc parseAssignmentStatement(p: Parser): Node =
-  let startPos = p.pos # <-- ADD THIS LINE
-
-  # Try to parse: identifier = expression ;
-  # CHANGE: parsePrimary instead of parseIdentifier
-  let left = parsePrimary(p) # <-- CHANGED from parseIdentifier
+  let
+    startPos = p.pos
+    left = parsePrimary(p)
   if left == nil:
     return nil
 
   if p.current.kind != tkAssign:
     # Not an assignment - reset parser position
-    p.pos = startPos # <-- USE startPos
+    p.pos = startPos
     p.current = p.tokens[startPos]
     return nil
 
   p.advance() # Skip =
 
-  let value = parseExpression(p) # This already works with default parameter
+  let value = parseExpression(p)
   if value == nil:
     echo "Error: Expected expression after '=' at line ",
       p.current.line, ":", p.current.col
@@ -1377,10 +1360,10 @@ proc parseIf(p: Parser): Node =
 
   # Check for else
   var elseBlock: Node = nil
-  if p.current.kind == tkElse: # This will now work
+  if p.current.kind == tkElse:
     p.advance()
     if p.current.kind == tkIf:
-      elseBlock = parseIf(p) # else if
+      elseBlock = parseIf(p)
     else:
       elseBlock = parseBlock(p)
       if elseBlock == nil:
@@ -1419,7 +1402,7 @@ proc printAst*(node: Node, indent: int = 0) =
   of nkVarDecl:
     echo spaces, "VarDecl: ", node.varName
     printAst(node.varValue, indent + 1)
-  of nkStruct: # <--- ADD THIS BLOCK
+  of nkStruct:
     echo spaces, "Struct: ", node.structName
     echo spaces, "  Fields:"
   of nkIdentifier:
@@ -1439,12 +1422,12 @@ proc printAst*(node: Node, indent: int = 0) =
     if node.forUpdate != nil:
       echo spaces, "  Update:"
       printAst(node.forUpdate, indent + 2)
-    echo spaces, "  Body:" # <-- Move this outside the if statement
-    printAst(node.forBody, indent + 2) # <-- And this too
-  of nkCall, nkReturn: # <-- Add nkReturn here too
+    echo spaces, "  Body:"
+    printAst(node.forBody, indent + 2)
+  of nkCall, nkReturn:
     if node.kind == nkCall:
       echo spaces, "Call: ", node.callFunc, "()"
-    else: # nkReturn
+    else:
       echo spaces, "Return:"
 
     if node.callArgs.len > 0:

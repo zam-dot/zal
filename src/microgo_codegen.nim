@@ -33,21 +33,13 @@ proc escapeString(str: string): string =
     else:
       result &= ch
 
-# microgo_codegen.nim - Update forward declarations section:
-
 # =========================== FORWARD DECLARATIONS ============================
-proc generateFor(node: Node, context: CodegenContext): string
 proc generateExpression(node: Node): string
 proc generateBlock(node: Node, context: CodegenContext): string
-proc generateIf(node: Node, context: CodegenContext): string
-
-# ⭐⭐ ADD THESE FOR STRUCTS AND ARRAYS ⭐⭐
-proc generateStruct(node: Node): string
 proc generateFieldAccess(node: Node): string
-proc generateVarDecl(node: Node, context: CodegenContext): string
 proc generateStructLiteral(node: Node): string
-proc generateIndexExpr(node: Node): string # <-- ADD
-proc generateArrayLiteral(node: Node): string # <-- ADD
+proc generateIndexExpr(node: Node): string
+proc generateArrayLiteral(node: Node): string
 proc generateArrayType(node: Node): string
 
 # =========================== BASIC EXPRESSION GENERATORS ============================
@@ -63,8 +55,96 @@ proc generateLiteral(node: Node): string =
 proc generateIdentifier(node: Node): string =
   node.identName
 
+# =========================== EXPRESSION GENERATORS ============================
+proc generateExpression(node: Node): string =
+  if node == nil:
+    return ""
+
+  case node.kind
+  of nkFieldAccess:
+    return generateFieldAccess(node)
+  of nkCall:
+    var callCode = ""
+    let funcName = node.callFunc
+
+    if funcName == "getmem":
+      callCode = "malloc(" & generateExpression(node.callArgs[0]) & ")"
+    elif funcName == "freemem":
+      callCode = "free(" & generateExpression(node.callArgs[0]) & ")"
+    elif funcName == "print":
+      callCode = "printf(...)"
+    else:
+      callCode = funcName & "("
+      if node.callArgs.len > 0:
+        for i, arg in node.callArgs:
+          if i > 0:
+            callCode &= ", "
+          callCode &= generateExpression(arg)
+      callCode &= ")"
+
+    return callCode # No semicolon!
+  of nkStructLiteral:
+    return generateStructLiteral(node)
+  of nkIndexExpr:
+    return generateIndexExpr(node)
+  of nkArrayLit:
+    return generateArrayLiteral(node)
+  of nkBinaryExpr:
+    generateExpression(node.left) & " " & node.op & " " & generateExpression(node.right)
+  of nkIdentifier:
+    node.identName
+  of nkArrayType:
+    return generateArrayType(node)
+  of nkLiteral, nkStringLit:
+    generateLiteral(node)
+  of nkGroup:
+    "(" & generateExpression(node.groupExpr) & ")"
+  else:
+    echo "ERROR in generateExpression: Unhandled node kind: ", node.kind
+    "/* ERROR: unhandled expression */"
+
+# =========================== GROUP GENERATORS ============================
 proc generateGroup(node: Node, context: CodegenContext): string =
   "(" & generateExpression(node.groupExpr) & ")"
+
+# =========================== LOOP GENERATORS ============================
+proc generateFor(node: Node, context: CodegenContext): string =
+  var code = "for ("
+
+  # Initialization
+  if node.forInit != nil:
+    case node.forInit.kind
+    of nkVarDecl:
+      code &=
+        "int " & node.forInit.varName & " = " & generateExpression(
+          node.forInit.varValue
+        )
+    of nkAssignment:
+      code &=
+        generateExpression(node.forInit.left) & " = " &
+        generateExpression(node.forInit.right)
+    else:
+      code &= generateExpression(node.forInit)
+  code &= "; "
+
+  # Condition
+  if node.forCondition != nil:
+    code &= generateExpression(node.forCondition)
+  code &= "; "
+
+  # Update
+  if node.forUpdate != nil:
+    code &= generateExpression(node.forUpdate)
+  code &= ") {\n"
+
+  # Body
+  let bodyCode = generateBlock(node.forBody, cgFunction)
+  for line in bodyCode.splitLines:
+    if line.len > 0:
+      code &= "  " & line & "\n"
+
+  code &= "}\n"
+  return indentLine(code, context)
 
 # =========================== STATEMENT GENERATORS ============================
 proc generateCBlock(node: Node, context: CodegenContext): string =
@@ -92,66 +172,15 @@ Consider moving to top level:
   if result.len > 0 and result[^1] != '\n':
     result &= "\n"
 
-# microgo_codegen.nim - FIX generateExpression
-proc generateExpression(node: Node): string =
-  if node == nil:
-    return ""
-
-  echo "DEBUG generateExpression: node.kind=",
-    node.kind, " callFunc=", (if node.kind == nkCall: node.callFunc else: "N/A")
-
-  case node.kind
-  of nkFieldAccess:
-    return generateFieldAccess(node)
-  of nkCall:
-    # Get the raw call (no semicolon)
-    var callCode = ""
-    let funcName = node.callFunc
-
-    if funcName == "getmem":
-      callCode = "malloc(" & generateExpression(node.callArgs[0]) & ")"
-    elif funcName == "freemem":
-      callCode = "free(" & generateExpression(node.callArgs[0]) & ")"
-    elif funcName == "print":
-      # ... handle print ...
-      callCode = "printf(...)" # Your print logic
-    else:
-      callCode = funcName & "("
-      # ... build args ...
-      callCode &= ")"
-
-    return callCode # No semicolon!
-  of nkStructLiteral:
-    return generateStructLiteral(node)
-  of nkIndexExpr: # <-- ADD THIS
-    return generateIndexExpr(node)
-  of nkArrayLit: # <-- ADD THIS
-    return generateArrayLiteral(node)
-  of nkBinaryExpr:
-    generateExpression(node.left) & " " & node.op & " " & generateExpression(node.right)
-  of nkIdentifier:
-    node.identName
-  of nkArrayType:
-    return generateArrayType(node)
-  of nkLiteral, nkStringLit:
-    generateLiteral(node)
-  of nkGroup:
-    "(" & generateExpression(node.groupExpr) & ")"
-  else:
-    echo "ERROR in generateExpression: Unhandled node kind: ", node.kind
-    "/* ERROR: unhandled expression */"
-
 # =========================== DECLARATION GENERATORS ============================
 proc generateVarDecl(node: Node, context: CodegenContext): string =
-  var typeName = "int" # Default fallback
+  var typeName = "int"
   var isArray = false
 
-  # ⭐⭐ SPECIAL CASE: If assigning getmem result, default to void* ⭐⭐
   if node.varValue != nil and node.varValue.kind == nkCall and
       node.varValue.callFunc == "getmem":
     typeName = "void*"
   elif node.varType.len > 0:
-    # Use explicit type if provided
     typeName = node.varType
 
     # Check if it's an array type (ends with [])
@@ -177,7 +206,7 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
         else:
           typeName = "int"
       else:
-        typeName = "int" # Empty array
+        typeName = "int"
     of nkLiteral:
       if node.varValue.literalValue.contains('.'):
         typeName = "double"
@@ -186,7 +215,6 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
     of nkStringLit:
       typeName = "char*"
     of nkCall:
-      # If it's a function call (like getmem), default to void*
       typeName = "void*"
     else:
       typeName = "int"
@@ -198,7 +226,6 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
     code = typeName & " " & node.varName & "[] = "
   else:
     code = typeName & " " & node.varName & " = "
-
   if node.varValue != nil:
     code &= generateExpression(node.varValue)
   else:
@@ -213,7 +240,6 @@ proc generateConstDecl(node: Node, context: CodegenContext): string =
     constExpr = "0"
     constType = "int"
 
-  # ✅ USE THE EXPLICIT TYPE IF PROVIDED
   if node.constType.len > 0:
     constType = node.constType
   else:
@@ -235,7 +261,7 @@ proc generateConstDecl(node: Node, context: CodegenContext): string =
       discard
 
   # Generate constExpr from value
-  if constExpr == "0": # Only if we didn't set it above
+  if constExpr == "0":
     constExpr = generateExpression(node.constValue)
 
   if context == cgFunction:
@@ -245,12 +271,8 @@ proc generateConstDecl(node: Node, context: CodegenContext): string =
     return "#define " & node.constName & " " & constExpr & "\n"
 
 # ============================ CALL GENERATORS ============================
-# microgo_codegen.nim - FIX generateCall to handle context properly
 proc generateCall(node: Node, context: CodegenContext): string =
   let funcName = node.callFunc
-
-  echo "DEBUG generateCall: funcName='", funcName, "' context=", context
-
   var callCode = ""
 
   # Build the function call
@@ -301,12 +323,11 @@ proc generateCall(node: Node, context: CodegenContext): string =
         callCode &= generateExpression(arg)
     callCode &= ")"
 
-  # ⭐⭐ CRITICAL FIX: Add semicolon for statements ⭐⭐
   if context != cgExpression:
     callCode &= ";\n"
     return indentLine(callCode, context)
   else:
-    return callCode # No semicolon for expressions
+    return callCode
 
 # =========================== ASSIGNMENT GENERATORS ===========================
 proc generateAssignment(node: Node, context: CodegenContext): string =
@@ -318,7 +339,6 @@ proc generateAssignment(node: Node, context: CodegenContext): string =
   of nkFieldAccess:
     leftCode = generateFieldAccess(node.left)
   else:
-    # Try expression as fallback
     leftCode = generateExpression(node.left)
 
   var code = leftCode & " = " & generateExpression(node.right) & ";\n"
@@ -334,25 +354,22 @@ proc generateReturn(node: Node, context: CodegenContext): string =
 
 # ============================ ARRAY TYPE GENERATORS ==========================
 proc generateArrayType(node: Node): string =
-  # Convert from your AST format to C type
-  # Example: nkArrayType with elemType="int", size=Node(literalValue="5")
-  # Should generate: "int[5]"
-
   let sizeStr =
     if node.size != nil:
-      generateExpression(node.size) # Get the size expression
+      generateExpression(node.size)
     else:
-      "" # For unsized arrays
+      ""
 
   if sizeStr.len > 0:
     return node.elemType & "[" & sizeStr & "]"
   else:
-    return node.elemType & "[]" # Or handle dynamic arrays
+    return node.elemType & "[]"
 
 # ============================= INDEX GENERATORS ==============================
 proc generateIndexExpr(node: Node): string =
-  let base = generateExpression(node.left)
-  let index = generateExpression(node.right)
+  let
+    base = generateExpression(node.left)
+    index = generateExpression(node.right)
   return base & "[" & index & "]"
 
 # ============================ ARRAY GENERATORS =============================
@@ -366,7 +383,6 @@ proc generateArrayLiteral(node: Node): string =
 proc generateIf(node: Node, context: CodegenContext): string =
   var code = "if (" & generateExpression(node.ifCondition) & ") {\n"
 
-  # Generate the then block
   let thenCode = generateBlock(node.ifThen, context)
   # Add indentation to each line of the then block
   for line in thenCode.splitLines:
@@ -379,10 +395,8 @@ proc generateIf(node: Node, context: CodegenContext): string =
   if node.ifElse != nil:
     code &= " else "
     if node.ifElse.kind == nkIf:
-      # else if - recursively generate
       code &= generateIf(node.ifElse, context)
     else:
-      # else block
       code &= "{\n"
       let elseCode = generateBlock(node.ifElse, context)
       for line in elseCode.splitLines:
@@ -397,23 +411,20 @@ proc generateIf(node: Node, context: CodegenContext): string =
 proc generateStruct(node: Node): string =
   var code = "typedef struct {\n"
 
-  # 1. FIX: Use 'node.fields' (where the fields are stored)
   for field in node.fields:
-    # This inner logic is correct, as fields are nkVarDecl nodes:
     code &= "  " & field.varType & " " & field.varName & ";\n"
 
-  # 2. FIX: Use 'node.structName' (where the name is stored)
   code &= "} " & node.structName & ";\n\n"
   return code
 
 proc generateStructLiteral(node: Node): string =
-  echo "DEBUG: Generating struct literal for type: ", node.structType
   var resultStruct = "{"
 
   var initializers: seq[string]
   for assignment in node.fieldValues:
-    let fieldName = assignment.left.identName
-    let fieldValue = generateExpression(assignment.right)
+    let
+      fieldName = assignment.left.identName
+      fieldValue = generateExpression(assignment.right)
 
     initializers.add("." & fieldName & " = " & fieldValue)
 
@@ -423,12 +434,10 @@ proc generateStructLiteral(node: Node): string =
 
 # ============================ FIELD ACCESS GENERATORS ============================
 proc generateFieldAccess(node: Node): string =
-  # obj.field
-  let base = generateExpression(node.base) # <-- FIX: node.base
-  let field = node.field.identName # <-- FIX: node.field.identName
+  let
+    base = generateExpression(node.base)
+    field = node.field.identName
 
-  # For now, simple: base.field
-  # Later: handle pointers (base->field)
   return base & "." & field
 
 # ============================== GENERATE BLOCK ================================
@@ -458,7 +467,7 @@ proc generateBlock(node: Node, context: CodegenContext): string =
     of nkFor:
       stmtCode = generateFor(stmt, context)
     else:
-      continue # Skip unsupported statement types
+      continue
 
     if stmtCode.len > 0:
       blockResult &= stmtCode
@@ -481,9 +490,7 @@ proc generateFunction(node: Node): string =
       for i, param in node.params:
         if i > 0:
           code &= ", "
-        # param is nkVarDecl, so use varType and varName
         code &= param.varType & " " & param.varName
-
     code &= ") {\n"
 
   # Generate the function body (which is a block)
@@ -502,9 +509,9 @@ proc generateProgram(node: Node): string =
     functionCode = ""
     hasCMain = false
     hasMicroGoMain = false
-    includes = "" # Separate includes section
-    defines = "" # Separate defines section
-    otherTopLevel = "" # Other top-level code
+    includes = ""
+    defines = ""
+    otherTopLevel = ""
     structsCode = ""
 
   # First pass: collect everything in correct order
@@ -516,7 +523,6 @@ proc generateProgram(node: Node): string =
       defines &= generateConstDecl(funcNode, cgGlobal)
     of nkCBlock:
       let cCode = generateCBlock(funcNode, cgGlobal)
-      # Check if it's an include statement
       if cCode.strip().startsWith("#include"):
         includes &= cCode
       else:
@@ -528,7 +534,6 @@ proc generateProgram(node: Node): string =
       if funcNode.funcName == "main":
         hasMicroGoMain = true
     of nkVarDecl:
-      # Handle global variables if you want
       otherTopLevel &= generateVarDecl(funcNode, cgGlobal)
     else:
       discard
@@ -542,46 +547,6 @@ proc generateProgram(node: Node): string =
     result &= "  // Auto-generated entry point\n"
     result &= "  return 0;\n"
     result &= "}\n"
-
-# =========================== LOOP GENERATORS ============================
-proc generateFor(node: Node, context: CodegenContext): string =
-  var code = "for ("
-
-  # Initialization
-  if node.forInit != nil:
-    case node.forInit.kind
-    of nkVarDecl:
-      code &=
-        "int " & node.forInit.varName & " = " & generateExpression(
-          node.forInit.varValue
-        )
-    of nkAssignment:
-      code &=
-        generateExpression(node.forInit.left) & " = " &
-        generateExpression(node.forInit.right)
-    else:
-      # Regular expression
-      code &= generateExpression(node.forInit)
-  code &= "; "
-
-  # Condition
-  if node.forCondition != nil:
-    code &= generateExpression(node.forCondition)
-  code &= "; "
-
-  # Update
-  if node.forUpdate != nil:
-    code &= generateExpression(node.forUpdate)
-  code &= ") {\n"
-
-  # Body
-  let bodyCode = generateBlock(node.forBody, cgFunction)
-  for line in bodyCode.splitLines:
-    if line.len > 0:
-      code &= "  " & line & "\n"
-
-  code &= "}\n"
-  return indentLine(code, context)
 
 # =========================== MAIN DISPATCH ============================
 proc generateC*(node: Node, context: string = "global"): string =
@@ -618,9 +583,9 @@ proc generateC*(node: Node, context: string = "global"): string =
     generateVarDecl(node, cgContext)
   of nkConstDecl:
     generateConstDecl(node, cgContext)
-  of nkBinaryExpr, nkIndexExpr, nkArrayLit: # Group them together
+  of nkBinaryExpr, nkIndexExpr, nkArrayLit:
     generateExpression(node)
-  of nkArrayType: # <-- ADD THIS CASE
+  of nkArrayType:
     generateArrayType(node)
   of nkIdentifier:
     generateIdentifier(node)

@@ -2,7 +2,6 @@
 import std/[tables, strutils]
 
 # =========================== TOKEN DEFINITIONS ============================
-# microgo_lexer.nim - Update the TokenKind enum
 type
   TokenKind* = enum
     # Keywords
@@ -10,29 +9,24 @@ type
     tkFunc = "func"
     tkIf = "if"
     tkElse = "else"
-    tkImport = "import"
-    tkInterface = "interface"
-    tkPackage = "package"
     tkReturn = "return"
     tkStruct = "struct"
-    tkType = "type"
     tkVar = "var"
     tkConst = "const"
     tkPrint = "print"
-    tkIntType = "int" # Type keyword 'int'
-    tkFloatType = "float" # Type keyword 'float'
-    tkStringType = "string" # Type keyword 'string'
-    tkBoolType = "bool" # Type keyword 'bool'
+    tkIntType = "int"
+    tkFloatType = "float"
+    tkStringType = "string"
+    tkBoolType = "bool"
     tkGetMem = "getmem"
     tkFreeMem = "freemem"
     tkSizeOf = "sizeof"
-    nkSizeOf = "sizeof"
 
     # Literals and identifiers
     tkIdent = "identifier"
-    tkIntLit = "integer" # Literal numbers like 42
-    tkFloatLit = "floatlit" # Literal floats like 3.14 (CHANGED from "float")
-    tkStringLit = "strlit" # Literal strings like "hello"
+    tkIntLit = "integer"
+    tkFloatLit = "floatlit"
+    tkStringLit = "strlit"
     tkNumber = "number"
 
     # Operators and punctuation
@@ -72,22 +66,18 @@ type
     line*, col*: int
     case isLiteral*: bool
     of true:
-      strVal*: string # For string literals
-      numVal*: float # For numeric literals
+      strVal*: string
+      numVal*: float
     else:
       discard
 
-# Keyword lookup table - UPDATED
+# Keyword lookup table
 const Keywords = {
   "for": tkFor,
   "func": tkFunc,
   "if": tkIf,
   "else": tkElse,
-  "import": tkImport,
-  "interface": tkInterface,
-  "package": tkPackage,
   "struct": tkStruct,
-  "type": tkType,
   "var": tkVar,
   "const": tkConst,
   "print": tkPrint,
@@ -95,7 +85,6 @@ const Keywords = {
   "getmem": tkGetMem,
   "freemem": tkFreeMem,
   "sizeof": tkSizeOf,
-  # TYPE KEYWORDS - ADD THESE
   "int": tkIntType,
   "float": tkFloatType,
   "string": tkStringType,
@@ -180,9 +169,10 @@ proc scanNumber(source: string, i: var int, line, col: var int): Token =
 
 # =========================== SCAN STRING ============================
 proc scanString(source: string, i: var int, line, col: var int): Token =
-  let startLine = line
-  let startCol = col
-  inc(i) # Skip opening quote
+  let
+    startLine = line
+    startCol = col
+  inc(i)
   inc(col)
 
   var strVal = ""
@@ -232,9 +222,13 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
   inc(col)
 
   # Skip optional whitespace
-  while i < source.len and source[i] in {' ', '\t'}:
+  while i < source.len and source[i] in {' ', '\t', '\n', '\r'}:
+    if source[i] == '\n':
+      inc(line)
+      col = 1
+    else:
+      inc(col)
     inc(i)
-    inc(col)
 
   # Expect {
   if i >= source.len or source[i] != '{':
@@ -255,7 +249,7 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
       cCode.add(source[i])
     elif source[i] == '}':
       dec(braceCount)
-      if braceCount > 0: # Only add if not the final closing brace
+      if braceCount > 0:
         cCode.add(source[i])
     else:
       cCode.add(source[i])
@@ -263,7 +257,6 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
     inc(i)
     inc(col)
 
-  # Now we're past the closing brace
   createToken(tkCBlock, cCode, startLine, startCol)
 
 # =========================== MAIN LEXER ============================
@@ -393,7 +386,6 @@ proc lex*(source: string): seq[Token] =
       inc(col)
     of '/':
       if i + 1 < source.len and source[i + 1] == '/':
-        # Line comment "//"
         while i < source.len and source[i] != '\n':
           inc(i)
           inc(col)

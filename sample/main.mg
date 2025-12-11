@@ -16,6 +16,11 @@ func main() {
     for (var i = 0; i < 10; i = i + 1) {
         print("i = %d\n", i)
     }
+    @c {
+        for (int i = 0; i < 10; i++) {
+            printf("i = %d\n", i);
+        }
+    }
 
     var i = 9
     if (i % 2 == 0) {

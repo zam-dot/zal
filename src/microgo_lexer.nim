@@ -23,6 +23,10 @@ type
     tkFloatType = "float" # Type keyword 'float'
     tkStringType = "string" # Type keyword 'string'
     tkBoolType = "bool" # Type keyword 'bool'
+    tkGetMem = "getmem"
+    tkFreeMem = "freemem"
+    tkSizeOf = "sizeof"
+    nkSizeOf = "sizeof"
 
     # Literals and identifiers
     tkIdent = "identifier"
@@ -54,6 +58,8 @@ type
     tkRParen = ")"
     tkLBrace = "{"
     tkRBrace = "}"
+    tkLBracket = "["
+    tkRBracket = "]"
 
     # Special
     tkEOF = "EOF"
@@ -86,6 +92,9 @@ const Keywords = {
   "const": tkConst,
   "print": tkPrint,
   "return": tkReturn,
+  "getmem": tkGetMem,
+  "freemem": tkFreeMem,
+  "sizeof": tkSizeOf,
   # TYPE KEYWORDS - ADD THESE
   "int": tkIntType,
   "float": tkFloatType,
@@ -364,6 +373,14 @@ proc lex*(source: string): seq[Token] =
       inc(col)
     of ')':
       tokens.add(createToken(tkRParen, ")", line, col))
+      inc(i)
+      inc(col)
+    of '[':
+      tokens.add(createToken(tkLBracket, "[", line, col))
+      inc(i)
+      inc(col)
+    of ']':
+      tokens.add(createToken(tkRBracket, "]", line, col))
       inc(i)
       inc(col)
     of '{':

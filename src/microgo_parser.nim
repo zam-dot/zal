@@ -356,6 +356,9 @@ proc parseType(p: Parser): string =
     of tkBoolType:
       p.advance()
       return "bool"
+    of tkSizeTType:
+      p.advance()
+      return "size_t"
     of tkIdent:
       let ident = parseIdentifier(p)
       return ident.identName
@@ -460,6 +463,9 @@ proc parseStruct(p: Parser): Node =
       p.advance()
     of tkBoolType:
       fieldType = "bool"
+      p.advance()
+    of tkSizeTType:
+      fieldType = "size_t"
       p.advance()
     of tkIdent:
       let typeIdent = parseIdentifier(p)
@@ -822,6 +828,9 @@ proc parseVarDecl(p: Parser): Node =
     of tkBoolType:
       varType = "bool"
       p.advance()
+    of tkSizeTType:
+      varType = "size_t"
+      p.advance()
     of tkIdent:
       let typeIdent = parseIdentifier(p)
       if typeIdent != nil:
@@ -943,6 +952,9 @@ proc parseVarDeclNoSemi(p: Parser): Node =
       p.advance()
     of tkBoolType:
       varType = "bool"
+      p.advance()
+    of tkSizeTType:
+      varType = "size_t"
       p.advance()
     of tkIdent:
       # Custom type
@@ -1075,6 +1087,10 @@ proc parseFunction(p: Parser): Node =
     of tkBoolType:
       paramType = "bool"
       p.advance()
+    # In all type parsing places, add:
+    of tkSizeTType:
+      paramType = "size_t"
+      p.advance()
     of tkIdent:
       let typeIdent = parseIdentifier(p)
       if typeIdent != nil:
@@ -1122,6 +1138,10 @@ proc parseFunction(p: Parser): Node =
         p.advance()
       of tkBoolType:
         nextParamType = "bool"
+        p.advance()
+      # In all type parsing places, add:
+      of tkSizeTType:
+        nextParamType = "size_t"
         p.advance()
       of tkIdent:
         let typeIdent = parseIdentifier(p)
@@ -1176,6 +1196,9 @@ proc parseFunction(p: Parser): Node =
       p.advance()
     of tkBoolType:
       returnType = "bool"
+      p.advance()
+    of tkSizeTType:
+      returnType = "size_t"
       p.advance()
     of tkIdent:
       let returnTypeIdent = parseIdentifier(p)
@@ -1550,10 +1573,10 @@ proc parseSwitch(p: Parser): Node =
   )
 
 # =========================== SWITCH EXPRESSION PARSER ============================
-proc parseSwitchExpr(p: Parser): Node =
-  # TODO: Implement expression switches (Zig-style: returns a value)
-  echo "Error: Expression switches not implemented yet"
-  return nil
+# proc parseSwitchExpr(p: Parser): Node =
+#   # TODO: Implement expression switches (Zig-style: returns a value)
+#   echo "Error: Expression switches not implemented yet"
+#   return nil
 
 # =========================== AST PRINTING ============================
 proc printAst*(node: Node, indent: int = 0) =

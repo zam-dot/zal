@@ -68,7 +68,7 @@ proc generateExpression(node: Node): string =
     let funcName = node.callFunc
 
     if funcName == "getmem":
-      callCode = "malloc(" & generateExpression(node.callArgs[0]) & ")"
+      callCode = "(size_t)malloc(" & generateExpression(node.callArgs[0]) & ")"
     elif funcName == "freemem":
       callCode = "free(" & generateExpression(node.callArgs[0]) & ")"
     elif funcName == "print":
@@ -217,11 +217,11 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
       typeName = "char*"
     of nkCall:
       if node.varValue.callFunc == "getmem":
-        typeName = "void*"
+        typeName = "size_t"
       else:
-        typeName = "int" # Default for other functions
+        typeName = "size_t*" # Default for other functions
     else:
-      typeName = "int"
+      typeName = "size_t*"
 
   # Build the declaration
   var code = ""
@@ -288,19 +288,19 @@ proc generateCall(node: Node, context: CodegenContext): string =
     else:
       callCode = "0 /* len() error */"
   of "getmem":
-    callCode = "malloc("
+    callCode = "(size_t)malloc("
     if node.callArgs.len > 0:
       callCode &= generateExpression(node.callArgs[0])
     else:
       callCode &= "0"
     callCode &= ")"
   of "freemem":
-    callCode = "free("
+    callCode = "free((void*)("
     if node.callArgs.len > 0:
       callCode &= generateExpression(node.callArgs[0])
     else:
-      callCode &= "NULL"
-    callCode &= ")"
+      callCode &= "0"
+    callCode &= "))"
   of "print":
     callCode = "printf("
     if node.callArgs.len == 0:
@@ -547,7 +547,6 @@ proc generateSwitch(node: Node, context: CodegenContext): string =
     return ""
 
   for caseNode in node.cases:
-    # Generate each case value (multiple values per case)
     for i, value in caseNode.caseValues:
       code &= "  case " & generateExpression(value) & ":\n"
 
@@ -574,7 +573,6 @@ proc generateSwitch(node: Node, context: CodegenContext): string =
 
 # =========================== CASE GENERATOR ============================
 proc generateCase(node: Node, context: CodegenContext): string {.used.} =
-  # This would be called from within generateSwitch/generateSwitchExpr
   var code = ""
   for i, value in node.caseValues:
     if i > 0:

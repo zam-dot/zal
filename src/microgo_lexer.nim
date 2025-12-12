@@ -26,6 +26,7 @@ type
     tkDefault = "default"
     tkNil = "nil"
     tkLen = "len"
+    tkSizeTType = "size_t"
 
     # Literals and identifiers
     tkIdent = "identifier"
@@ -94,6 +95,7 @@ const Keywords = {
   "float": tkFloatType,
   "string": tkStringType,
   "bool": tkBoolType,
+  "size_t": tkSizeTType,
   "switch": tkSwitch,
   "case": tkCase,
   "default": tkDefault,

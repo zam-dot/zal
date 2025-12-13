@@ -34,6 +34,7 @@ type
     tkFloatLit = "floatlit"
     tkStringLit = "strlit"
     tkNumber = "number"
+    tkCharLit = "character"
 
     # Operators and punctuation
     tkAssign = "="
@@ -180,11 +181,11 @@ proc scanNumber(source: string, i: var int, line, col: var int): Token =
 
   createToken(kind, lexeme, line, tokenCol, true, "", numVal)
 
-# =========================== SCAN STRING ============================
 proc scanString(source: string, i: var int, line, col: var int): Token =
   let
     startLine = line
     startCol = col
+
   inc(i)
   inc(col)
 
@@ -222,6 +223,63 @@ proc scanString(source: string, i: var int, line, col: var int): Token =
   inc(col)
 
   createToken(tkStringLit, "\"" & strVal & "\"", startLine, startCol, true, strVal)
+
+# =========================== SCAN STRING ============================
+proc scanCharLiteral(source: string, i: var int, line, col: var int): Token =
+  let
+    startLine = line
+    startCol = col
+
+  # Skip opening quote
+  inc(i)
+  inc(col)
+
+  if i >= source.len:
+    return createToken(tkError, "Unterminated character literal", startLine, startCol)
+
+  var charVal = '\0'
+
+  # Handle escape sequences
+  if source[i] == '\\':
+    inc(i)
+    inc(col)
+    if i >= source.len:
+      return createToken(tkError, "Unterminated escape sequence", startLine, startCol)
+
+    case source[i]
+    of 'n':
+      charVal = '\n'
+    of 't':
+      charVal = '\t'
+    of 'r':
+      charVal = '\r'
+    of '\'':
+      charVal = '\''
+    of '\\':
+      charVal = '\\'
+    of '0':
+      charVal = '\0'
+    else:
+      # Unknown escape - just use the character
+      charVal = source[i]
+
+    inc(i)
+    inc(col)
+  else:
+    # Regular character
+    charVal = source[i]
+    inc(i)
+    inc(col)
+
+  # Expect closing quote
+  if i >= source.len or source[i] != '\'':
+    return createToken(tkError, "Expected closing quote", startLine, startCol)
+
+  # Skip closing quote
+  inc(i)
+  inc(col)
+
+  createToken(tkCharLit, "'" & charVal & "'", startLine, startCol, true, $charVal)
 
 # =========================== SCAN C BLOCK ============================
 proc scanCBlock(source: string, i: var int, line, col: var int): Token =
@@ -412,6 +470,8 @@ proc lex*(source: string): seq[Token] =
       inc(line)
       col = 1
       inc(i)
+    of '\'':
+      tokens.add(scanCharLiteral(source, i, line, col))
     else:
       tokens.add(createToken(tkError, "Unexpected character: " & ch, line, col))
       inc(i)

@@ -212,6 +212,15 @@ proc parseLiteral(p: Parser): Node =
       literalValue: if p.current.isLiteral: p.current.strVal else: p.current.lexeme,
     )
     p.advance()
+  of tkCharLit:
+    result = Node(
+      kind: nkLiteral, # Or nkCharLit if you want separate node type
+      line: p.current.line,
+      col: p.current.col,
+      nodeKind: nkLiteral,
+      literalValue: p.current.lexeme, # This will be like 'A'
+    )
+    p.advance()
   # ADD THIS CASE:
   of tkNil:
     result = Node(

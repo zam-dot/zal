@@ -123,10 +123,16 @@ proc compileFile(filename: string, runImmediately: bool = true): bool =
   if filename.endsWith(".mg"):
     baseName = filename[0 ..^ 4]
 
+  # Extract just the filename without path
+  var justFilename = extractFilename(baseName)
+  if justFilename.endsWith(".mg"):
+    justFilename = justFilename[0 ..^ 4]
+
   let
-    cFilename = baseName & ".c"
+    cFilename = justFilename & ".c"
     formattedCCode = formatCode(cCode, cFilename)
 
+  # Write to current directory (better for project structure)
   writeFile(cFilename, formattedCCode)
   echo "Generated ", cFilename
 
@@ -146,6 +152,7 @@ Usage:
   microgo <file.mg>           # Compile and run immediately
   microgo run <file.mg>       # Same as above
   microgo build <file.mg>     # Compile to C only
+  microgo init [name]         # Create new project
   
 Options:
   -h, --help                  Show this help message
@@ -154,6 +161,8 @@ Examples:
   microgo hello.mg            # Compile and run
   microgo run hello.mg        # Same as above
   microgo build hello.mg      # Generate hello.c only
+  microgo init myproject      # Create new project
+  microgo init                # Create 'myproject' folder
 """
 
 # =========================== RUN FILE ===================================
@@ -164,6 +173,73 @@ proc runFile(filename: string): bool =
 proc buildFile(filename: string): bool =
   compileFile(filename, runImmediately = false)
 
+# =========================== INIT PROJECT ================================
+proc initProject(projectName: string = "") =
+  var actualName = projectName
+
+  if actualName.len == 0:
+    actualName = "myproject"
+    echo "No project name provided, using '", actualName, "'"
+
+  let projectDir = actualName
+
+  # Create directory structure
+  createDir(projectDir)
+  createDir(projectDir / "src")
+  createDir(projectDir / "output")
+  createDir(projectDir / "bin")
+  createDir(projectDir / "lib")
+
+  # Create main.mg
+  let mainContent =
+    """// @include ../lib/lib.mg
+@c {
+    #include <stdio.h>
+}
+
+func main() {
+    print("Hello from MicroGo!\n")
+}
+"""
+
+  writeFile(projectDir / "src" / "main.mg", mainContent)
+
+  # Create Makefile
+  let makefileContent =
+    """# MicroGo Project Makefile
+PROJECT = """ & actualName & "\n" &
+    """
+SRC_DIR = src
+OUTPUT_DIR = output
+BIN_DIR = bin
+
+# Compiler
+MGC = microgo
+
+# Build rules
+all: build run
+
+build: $(OUTPUT_DIR)/main.c
+	@echo "Compiling C code..."
+	gcc -O2 $(OUTPUT_DIR)/main.c -o $(BIN_DIR)/$(PROJECT)
+
+$(OUTPUT_DIR)/main.c: $(SRC_DIR)/main.mg
+	@echo "Compiling MicroGo to C..."
+	$(MGC) build $(SRC_DIR)/main.mg
+	@mv src/main.c $(OUTPUT_DIR)/ 2>/dev/null || mv main.c $(OUTPUT_DIR)/
+
+run: build
+	@echo "Running $(PROJECT)..."
+	./$(BIN_DIR)/$(PROJECT)
+
+clean:
+	rm -f $(OUTPUT_DIR)/*.c $(BIN_DIR)/*
+
+.PHONY: all build run clean
+"""
+
+  writeFile(projectDir / "Makefile", makefileContent)
+
 # ============================= MAIN ======================================
 proc main() =
   if paramCount() == 0:
@@ -173,6 +249,12 @@ proc main() =
   let command = paramStr(1)
 
   case command
+  of "init":
+    if paramCount() >= 2:
+      let projectName = paramStr(2)
+      initProject(projectName)
+    else:
+      initProject()
   of "run":
     if paramCount() < 2:
       echo "Usage: microgo run <file.mg>"

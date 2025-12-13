@@ -179,49 +179,69 @@ Consider moving to top level:
     result &= "\n"
 
 # =========================== DECLARATION GENERATORS ============================
+proc inferTypeFromExpression(expr: Node): string =
+  ## Infer C type from an expression node
+  if expr == nil:
+    return "int"
+
+  case expr.kind
+  of nkLiteral:
+    if expr.literalValue.contains('.'):
+      return "double"
+    else:
+      return "int"
+  of nkStringLit:
+    return "char*"
+  of nkCall:
+    let funcName = expr.callFunc
+    case funcName
+    of "getmem":
+      return "size_t"
+    of "openFile", "fopen", "openfile":
+      return "FILE *"
+    of "malloc", "calloc":
+      return "void*"
+    of "len":
+      return "size_t"
+    of "print":
+      return "int" # printf returns int
+    else:
+      # Pattern matching on function names
+      if funcName.contains("open") or funcName.contains("fopen") or
+          funcName.contains("file") or funcName.contains("File"):
+        return "FILE*"
+      elif funcName.contains("alloc") or funcName.contains("malloc"):
+        return "void*"
+      elif funcName.contains("str") or funcName.contains("string"):
+        return "char*"
+      else:
+        return "size_t*" # Generic pointer fallback
+  of nkArrayLit:
+    if expr.elements.len > 0:
+      return inferTypeFromExpression(expr.elements[0]) & "*" # Array becomes pointer
+    else:
+      return "int*"
+  else:
+    return "size_t*"
+
+# Then simplify generateVarDecl:
 proc generateVarDecl(node: Node, context: CodegenContext): string =
   var typeName = "int"
   var isArray = false
 
   if node.varType.len > 0:
     typeName = node.varType
-    # Check if it's an array type (ends with [])
     if typeName.endsWith("[]"):
       isArray = true
-      typeName = typeName[0 ..^ 3] # Remove "[]" from type
+      typeName = typeName[0 ..^ 3]
   elif node.varValue != nil:
-    # Infer from value
-    case node.varValue.kind
-    of nkArrayLit:
+    typeName = inferTypeFromExpression(node.varValue)
+    # Check if value is array literal
+    if node.varValue.kind == nkArrayLit:
       isArray = true
-      if node.varValue.elements.len > 0:
-        let firstElem = node.varValue.elements[0]
-        case firstElem.kind
-        of nkLiteral:
-          if firstElem.literalValue.contains('.'):
-            typeName = "double"
-          else:
-            typeName = "int"
-        of nkStringLit:
-          typeName = "char*"
-        else:
-          typeName = "int"
-      else:
-        typeName = "int"
-    of nkLiteral:
-      if node.varValue.literalValue.contains('.'):
-        typeName = "double"
-      else:
-        typeName = "int"
-    of nkStringLit:
-      typeName = "char*"
-    of nkCall:
-      if node.varValue.callFunc == "getmem":
-        typeName = "size_t"
-      else:
-        typeName = "size_t*" # Default for other functions
-    else:
-      typeName = "size_t*"
+      # Remove the * that inferTypeFromExpression might have added
+      if typeName.endsWith("*"):
+        typeName = typeName[0 ..^ 2]
 
   # Build the declaration
   var code = ""

@@ -133,12 +133,6 @@ proc generateFor(node: Node, context: CodegenContext): string =
   return indentLine(code, context)
 
 proc generateForRange(node: Node, context: CodegenContext): string =
-  echo ">>> DEBUG generateForRange: CALLED! <<<"
-  echo "DEBUG generateForRange: called! index=",
-    if node.rangeIndex == nil: "nil" else: node.rangeIndex.identName,
-    " value=",
-    if node.rangeValue == nil: "nil" else: node.rangeValue.identName
-
   if node.rangeTarget == nil:
     return indentLine("/* ERROR: No range target */\n", context)
 
@@ -280,9 +274,7 @@ proc inferTypeFromExpression(expr: Node): string =
 
 # Then simplify generateVarDecl:
 proc generateVarDecl(node: Node, context: CodegenContext): string =
-  echo "DEBUG generateVarDecl: ", node.varName
   if node.varValue != nil:
-    echo "  Value kind: ", node.varValue.kind
     if node.varValue.kind == nkCall:
       echo "  Call function: ", node.varValue.callFunc
   var typeName = node.varType
@@ -374,7 +366,6 @@ proc generateConstDecl(node: Node, context: CodegenContext): string =
 
 # ============================ CALL GENERATORS ============================
 proc generateCall(node: Node, context: CodegenContext): string =
-  echo "DEBUG generateCall CALLED: func=", node.callFunc
   let funcName = node.callFunc
   var callCode = ""
 
@@ -629,33 +620,12 @@ proc generateBlock(node: Node, context: CodegenContext): string =
 
 # =========================== STRUCTURE GENERATORS ============================
 proc generateFunction(node: Node): string =
-  echo "DEBUG generateFunction: processing ", node.body.statements.len, " statements"
-
-  for i, stmt in node.body.statements:
-    echo "  Stmt ", i, ": kind=", stmt.kind
-
-    if stmt.kind == nkDefer:
-      echo "    DEFER statement"
-    elif stmt.kind == nkVarDecl:
-      echo "    VAR declaration: ", stmt.varName
-    elif stmt.kind == nkCall:
-      echo "    CALL: ", stmt.callFunc
-    elif stmt.kind == nkAssignment:
-      echo "    ASSIGNMENT"
-    elif stmt.kind == nkCBlock:
-      echo "    CBLOCK"
   var code = ""
-
-  echo "DEBUG generateFunction: ",
-    node.funcName, " return=", node.returnType, " params=", node.params.len
 
   if node.funcName == "main":
     code = "int main() {\n"
   else:
     code = node.returnType & " " & node.funcName & "("
-
-    # DEBUG: Show what we're adding
-    echo "  Building signature: ", code
 
     # ADD PARAMETERS HERE (BEFORE closing parenthesis)
     if node.params.len > 0:
@@ -858,7 +828,6 @@ proc generateProgram(node: Node): string =
 
 # =========================== MAIN DISPATCH ============================
 proc generateC*(node: Node, context: string = "global"): string =
-  echo "DEBUG generateC: node.kind = ", node.kind
   let cgContext =
     if context == "function":
       cgFunction

@@ -226,17 +226,8 @@ proc parseInferredVarDecl(p: Parser): Node =
     echo "Error: Expected ':=' after identifier at line ", line, ":", col
     return nil
 
-  echo "DEBUG parseInferredVarDecl: parsing expression after :="
-  echo "  Current token: ", p.current.kind, " '", p.current.lexeme, "'"
-
   # Parse the value
   let value = parseExpression(p)
-
-  echo "DEBUG parseInferredVarDecl: expression result = ",
-    if value == nil:
-      "nil"
-    else:
-      $value.kind
 
   if value == nil:
     echo "Error: Expected expression after ':=' at line ",
@@ -312,7 +303,6 @@ proc parseCBlock(p: Parser): Node =
 
 # =========================== EXPRESSION PARSER ============================
 proc parseExpression(p: Parser, minPrecedence: int = 0): Node =
-  echo "DEBUG parseExpression: token=", p.current.kind, " '", p.current.lexeme, "'"
   var left = parsePrimary(p)
   if left == nil:
     return nil
@@ -370,7 +360,6 @@ proc parseExpression(p: Parser, minPrecedence: int = 0): Node =
 
 # =========================== CALL ARGUMENTS ============================
 proc parseCallArguments(p: Parser): seq[Node] =
-  echo "DEBUG parseCall: token=", p.current.kind, " lexeme='", p.current.lexeme, "'"
   var args: seq[Node] = @[]
 
   if p.current.kind != tkRParen:
@@ -596,58 +585,58 @@ proc parseStruct(p: Parser): Node =
     fields: fields,
   )
 
-proc parseStructLiteral(p: Parser, structName: string): Node =
-  let
-    line = p.current.line
-    col = p.current.col
-  p.advance()
-
-  var fieldValues: seq[Node]
-  while p.current.kind != tkRBrace:
-    let fieldName = parseIdentifier(p)
-    if fieldName == nil:
-      echo "Error: Expected field name in struct literal."
-      return nil
-
-    # Expect '=' separator
-    if not p.expect(tkAssign):
-      echo "Error: Expected '=' after field name in struct literal."
-      return nil
-
-    # Parse the value expression
-    let fieldValue = parseExpression(p)
-    if fieldValue == nil:
-      echo "Error: Expected value after '=' in struct literal."
-      return nil
-
-    # Create assignment node
-    let assignmentNode = Node(
-      kind: nkAssignment,
-      line: fieldName.line,
-      col: fieldName.col,
-      nodeKind: nkAssignment,
-      left: fieldName,
-      right: fieldValue,
-    )
-    fieldValues.add(assignmentNode)
-
-    # Expect comma or closing brace
-    if p.current.kind == tkComma:
-      p.advance()
-    elif p.current.kind != tkRBrace:
-      echo "Error: Expected ',' or '}' after field value."
-      return nil
-
-  p.advance()
-
-  return Node(
-    kind: nkStructLiteral,
-    line: line,
-    col: col,
-    nodeKind: nkStructLiteral,
-    structType: structName,
-    fieldValues: fieldValues,
-  )
+# proc parseStructLiteral(p: Parser, structName: string): Node =
+#   let
+#     line = p.current.line
+#     col = p.current.col
+#   p.advance()
+#
+#   var fieldValues: seq[Node]
+#   while p.current.kind != tkRBrace:
+#     let fieldName = parseIdentifier(p)
+#     if fieldName == nil:
+#       echo "Error: Expected field name in struct literal."
+#       return nil
+#
+#     # Expect '=' separator
+#     if not p.expect(tkAssign):
+#       echo "Error: Expected '=' after field name in struct literal."
+#       return nil
+#
+#     # Parse the value expression
+#     let fieldValue = parseExpression(p)
+#     if fieldValue == nil:
+#       echo "Error: Expected value after '=' in struct literal."
+#       return nil
+#
+#     # Create assignment node
+#     let assignmentNode = Node(
+#       kind: nkAssignment,
+#       line: fieldName.line,
+#       col: fieldName.col,
+#       nodeKind: nkAssignment,
+#       left: fieldName,
+#       right: fieldValue,
+#     )
+#     fieldValues.add(assignmentNode)
+#
+#     # Expect comma or closing brace
+#     if p.current.kind == tkComma:
+#       p.advance()
+#     elif p.current.kind != tkRBrace:
+#       echo "Error: Expected ',' or '}' after field value."
+#       return nil
+#
+#   p.advance()
+#
+#   return Node(
+#     kind: nkStructLiteral,
+#     line: line,
+#     col: col,
+#     nodeKind: nkStructLiteral,
+#     structType: structName,
+#     fieldValues: fieldValues,
+#   )
 
 # =========================== CALL PARSER ============================
 proc parseCall(p: Parser): Node =
@@ -689,8 +678,6 @@ proc parseCallStatement(p: Parser): Node =
 
 # =========================== CALL EXPRESSION PARSER ===========================
 proc parseCallExpr(p: Parser): Node =
-  echo "DEBUG parseCallExpr START: token=",
-    p.current.kind, " lexeme='", p.current.lexeme, "'"
   let
     line = p.current.line
     col = p.current.col
@@ -1079,8 +1066,6 @@ proc parseVarDeclNoSemi(p: Parser): Node =
 
 # =========================== STATEMENT PARSERS ============================
 proc parseStatement(p: Parser): Node =
-  echo "DEBUG parseStatement: token=", p.current.kind, " '", p.current.lexeme, "'"
-
   case p.current.kind
   of tkPrint:
     let callNode = parseCall(p)
@@ -1113,31 +1098,21 @@ proc parseStatement(p: Parser): Node =
   of tkIf:
     return parseIf(p)
   of tkFor:
-    echo "DEBUG: Found 'for' token"
-    # Peek ahead to see if it's a range loop
     let savedPos = p.pos
 
     # Skip 'for'
     p.advance()
-    echo "  After skipping 'for': token=", p.current.kind, " '", p.current.lexeme, "'"
 
     # Check if next tokens match pattern: ident (',' ident)? 'in'
     if p.current.kind == tkIdent:
-      echo "  Found identifier"
       p.advance() # Skip identifier
 
       if p.current.kind == tkComma:
-        echo "  Found comma"
         p.advance()
         if p.current.kind == tkIdent:
-          echo "  Found second identifier"
           p.advance()
 
-      echo "  Current token after identifiers: ",
-        p.current.kind, " '", p.current.lexeme, "'"
-
       if p.current.kind == tkIn:
-        echo "  Found 'in' - it's a range loop!"
         # It's a range loop! Reset and parse it
         p.pos = savedPos
         p.current = p.tokens[savedPos]
@@ -1146,7 +1121,6 @@ proc parseStatement(p: Parser): Node =
         echo "  Not 'in', it's: ", p.current.kind
 
     # Not a range loop, reset and parse as regular for
-    echo "  Falling back to regular for loop"
     p.pos = savedPos
     p.current = p.tokens[savedPos]
     return parseFor(p)
@@ -1372,7 +1346,6 @@ proc parseFunction(p: Parser): Node =
     echo "Error: Expected function body"
     return nil
 
-  echo "DEBUG: Parsing function ", ident.identName, " with ", params.len, " params"
   for param in params:
     echo "  Param: ", param.varName, " : ", param.varType
 
@@ -1522,7 +1495,6 @@ proc parseFor(p: Parser): Node =
 
 # =========================== FOR RANGE LOOP PARSER ============================
 proc parseForRange(p: Parser): Node =
-  echo "DEBUG parseForRange: called"
   let
     line = p.current.line
     col = p.current.col
@@ -1588,8 +1560,6 @@ proc parseForRange(p: Parser): Node =
 
 # =========================== ASSIGNMENT PARSER ============================
 proc parseAssignmentStatement(p: Parser): Node =
-  echo "DEBUG parseAssignmentStatement: token=",
-    p.current.kind, " '", p.current.lexeme, "'"
   let startPos = p.pos
   let left = parsePrimary(p)
 

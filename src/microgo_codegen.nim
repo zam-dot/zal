@@ -34,6 +34,7 @@ proc escapeString(str: string): string =
       result &= ch
 
 # =========================== FORWARD DECLARATIONS ============================
+proc generateCall(node: Node, context: CodegenContext): string
 proc generateExpression(node: Node): string
 proc generateBlock(node: Node, context: CodegenContext): string
 proc generateFieldAccess(node: Node): string
@@ -62,52 +63,30 @@ proc generateExpression(node: Node): string =
 
   case node.kind
   of nkFieldAccess:
-    return generateFieldAccess(node)
+    result = generateFieldAccess(node)
   of nkCall:
-    var callCode = ""
-    let funcName = node.callFunc
-
-    if funcName == "getmem":
-      callCode = "(size_t)malloc(" & generateExpression(node.callArgs[0]) & ")"
-    elif funcName == "freemem":
-      callCode = "free(" & generateExpression(node.callArgs[0]) & ")"
-    elif funcName == "print":
-      callCode = "printf(...)"
-    elif funcName == "len":
-      if node.callArgs.len == 1:
-        let arg = generateExpression(node.callArgs[0])
-        callCode = "sizeof(" & arg & ") / sizeof(" & arg & "[0])"
-      else:
-        callCode = "0"
-    else:
-      callCode = funcName & "("
-      if node.callArgs.len > 0:
-        for i, arg in node.callArgs:
-          if i > 0:
-            callCode &= ", "
-          callCode &= generateExpression(arg)
-      callCode &= ")"
-
-    return callCode # No semicolon!
+    result = generateCall(node, cgExpression)
   of nkStructLiteral:
-    return generateStructLiteral(node)
+    result = generateStructLiteral(node)
   of nkIndexExpr:
-    return generateIndexExpr(node)
+    result = generateIndexExpr(node)
   of nkArrayLit:
-    return generateArrayLiteral(node)
+    result = generateArrayLiteral(node)
   of nkBinaryExpr:
-    generateExpression(node.left) & " " & node.op & " " & generateExpression(node.right)
+    result =
+      generateExpression(node.left) & " " & node.op & " " &
+      generateExpression(node.right)
   of nkIdentifier:
-    node.identName
+    result = node.identName
   of nkArrayType:
-    return generateArrayType(node)
+    result = generateArrayType(node)
   of nkLiteral, nkStringLit:
-    generateLiteral(node)
+    result = generateLiteral(node)
   of nkGroup:
-    "(" & generateExpression(node.groupExpr) & ")"
+    result = "(" & generateExpression(node.groupExpr) & ")"
   else:
     echo "ERROR in generateExpression: Unhandled node kind: ", node.kind
-    "/* ERROR: unhandled expression */"
+    result = "/* ERROR: unhandled expression */"
 
 # =========================== GROUP GENERATORS ============================
 proc generateGroup(node: Node, context: CodegenContext): string =
@@ -212,12 +191,12 @@ proc inferTypeFromExpression(expr: Node): string =
   of nkCall:
     let funcName = expr.callFunc
     case funcName
-    of "getmem", "malloc", "calloc":
+    of "alloc":
+      if expr.callArgs.len >= 1:
+        let typeArg = expr.callArgs[0]
+        if typeArg.kind == nkIdentifier:
+          return typeArg.identName & "*" # int -> int*
       return "void*"
-    of "len":
-      return "size_t"
-    else:
-      return "int" # Default
   of nkArrayLit:
     if expr.elements.len > 0:
       let elemType = inferTypeFromExpression(expr.elements[0])
@@ -240,6 +219,11 @@ proc inferTypeFromExpression(expr: Node): string =
 
 # Then simplify generateVarDecl:
 proc generateVarDecl(node: Node, context: CodegenContext): string =
+  echo "DEBUG generateVarDecl: ", node.varName
+  if node.varValue != nil:
+    echo "  Value kind: ", node.varValue.kind
+    if node.varValue.kind == nkCall:
+      echo "  Call function: ", node.varValue.callFunc
   var typeName = node.varType
   var isArray = false
 
@@ -329,10 +313,28 @@ proc generateConstDecl(node: Node, context: CodegenContext): string =
 
 # ============================ CALL GENERATORS ============================
 proc generateCall(node: Node, context: CodegenContext): string =
+  echo "DEBUG generateCall CALLED: func=", node.callFunc
   let funcName = node.callFunc
   var callCode = ""
 
   case funcName
+  of "alloc":
+    echo "  Handling alloc function"
+    # alloc(type, count) -> malloc(count * sizeof(type))
+    if node.callArgs.len == 2:
+      let
+        typeArg = node.callArgs[0]
+        countArg = node.callArgs[1]
+
+      # Get type name from argument
+      var typeName = "int" # default
+      if typeArg.kind == nkIdentifier:
+        typeName = typeArg.identName
+
+      callCode =
+        "malloc(" & generateExpression(countArg) & " * sizeof(" & typeName & "))"
+    else:
+      callCode = "malloc(0)"
   of "len":
     # Generate: sizeof(arr) / sizeof(arr[0])
     if node.callArgs.len == 1:
@@ -341,19 +343,16 @@ proc generateCall(node: Node, context: CodegenContext): string =
     else:
       callCode = "0 /* len() error */"
   of "getmem":
-    callCode = "(size_t)malloc("
     if node.callArgs.len > 0:
-      callCode &= generateExpression(node.callArgs[0])
+      callCode = "malloc(" & generateExpression(node.callArgs[0]) & ")"
     else:
-      callCode &= "0"
-    callCode &= ")"
-  of "freemem":
-    callCode = "free((void*)("
+      callCode = "malloc(0)"
+  of "free", "freemem":
     if node.callArgs.len > 0:
-      callCode &= generateExpression(node.callArgs[0])
+      let arg = generateExpression(node.callArgs[0])
+      callCode = "free(" & arg & ")" # Should be just this
     else:
-      callCode &= "0"
-    callCode &= "))"
+      callCode = "free(NULL)"
   of "print":
     callCode = "printf("
     if node.callArgs.len == 0:
@@ -569,6 +568,21 @@ proc generateBlock(node: Node, context: CodegenContext): string =
 
 # =========================== STRUCTURE GENERATORS ============================
 proc generateFunction(node: Node): string =
+  echo "DEBUG generateFunction: processing ", node.body.statements.len, " statements"
+
+  for i, stmt in node.body.statements:
+    echo "  Stmt ", i, ": kind=", stmt.kind
+
+    if stmt.kind == nkDefer:
+      echo "    DEFER statement"
+    elif stmt.kind == nkVarDecl:
+      echo "    VAR declaration: ", stmt.varName
+    elif stmt.kind == nkCall:
+      echo "    CALL: ", stmt.callFunc
+    elif stmt.kind == nkAssignment:
+      echo "    ASSIGNMENT"
+    elif stmt.kind == nkCBlock:
+      echo "    CBLOCK"
   var code = ""
 
   echo "DEBUG generateFunction: ",
@@ -823,7 +837,7 @@ proc generateC*(node: Node, context: string = "global"): string =
   of nkLiteral, nkStringLit:
     generateLiteral(node)
   of nkCall:
-    return generateCall(node, cgContext)
+    return generateCall(node, cgExpression)
   of nkIf:
     generateIf(node, cgContext)
   of nkFor:

@@ -28,6 +28,7 @@ type
     tkLen = "len"
     tkSizeTType = "size_t"
     tkDefer = "defer"
+    tkAlloc = "alloc"
 
     # Literals and identifiers
     tkIdent = "identifier"
@@ -93,6 +94,7 @@ const Keywords = {
   "return": tkReturn,
   "getmem": tkGetMem,
   "freemem": tkFreeMem,
+  "free": tkFreeMem,
   "sizeof": tkSizeOf,
   "int": tkIntType,
   "float": tkFloatType,
@@ -106,6 +108,7 @@ const Keywords = {
   "nil": tkNil,
   "len": tkLen,
   "defer": tkDefer,
+  "alloc": tkAlloc,
 }.toTable
 
 # =========================== HELPER FUNCTIONS ============================

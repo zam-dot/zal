@@ -58,6 +58,8 @@ type
     tkLe = "<="
     tkGe = ">="
     tkColonAssign = ":="
+    tkAnd = "&&"
+    tkOr = "||"
 
     # Brackets
     tkLParen = "("
@@ -449,6 +451,24 @@ proc lex*(source: string): seq[Token] =
       tokens.add(createToken(tkSemicolon, ";", line, col))
       inc(i)
       inc(col)
+    of '&':
+      if i + 1 < source.len and source[i + 1] == '&':
+        tokens.add(createToken(tkAnd, "&&", line, col))
+        inc(i, 2)
+        inc(col, 2)
+      else:
+        tokens.add(createToken(tkError, "Unexpected character: &", line, col))
+        inc(i)
+        inc(col)
+    of '|':
+      if i + 1 < source.len and source[i + 1] == '|':
+        tokens.add(createToken(tkOr, "||", line, col))
+        inc(i, 2)
+        inc(col, 2)
+      else:
+        tokens.add(createToken(tkError, "Unexpected character: |", line, col))
+        inc(i)
+        inc(col)
     of '(':
       tokens.add(createToken(tkLParen, "(", line, col))
       inc(i)

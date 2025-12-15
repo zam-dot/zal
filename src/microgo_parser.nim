@@ -132,21 +132,15 @@ type Parser* = ref object
 # =========================== PRECEDENCE TABLE ============================
 proc getPrecedence(kind: TokenKind): int =
   case kind
-  of tkAssign, tkColonAssign:
-    1
-  # Both have same precedence
-  of tkEq, tkNe:
-    2
-  of tkLt, tkGt, tkLe, tkGe:
-    3
-  of tkPlus, tkMinus:
-    4
-  of tkStar, tkSlash, tkModulus:
-    5
-  of tkDotDot:
-    6
-  else:
-    0
+  of tkAssign, tkColonAssign: 1
+  of tkOr: 2
+  of tkAnd: 3
+  of tkEq, tkNe: 4
+  of tkLt, tkGt, tkLe, tkGe: 5
+  of tkPlus, tkMinus: 6
+  of tkStar, tkSlash, tkModulus: 7
+  of tkDotDot: 8
+  else: 0
 
 # =========================== FORWARD DECLARATIONS ============================
 proc parseForRange(p: Parser): Node
@@ -1099,13 +1093,13 @@ proc parseStatement(p: Parser): Node =
     return parseIf(p)
   of tkFor:
     let savedPos = p.pos
-
-    # Skip 'for'
+    # Skip 'for' temporarily to peek ahead
     p.advance()
 
-    # Check if next tokens match pattern: ident (',' ident)? 'in'
+    # Check for range loop: for i, v in arr
     if p.current.kind == tkIdent:
-      p.advance() # Skip identifier
+      let nextPos = p.pos
+      p.advance()
 
       if p.current.kind == tkComma:
         p.advance()
@@ -1113,17 +1107,26 @@ proc parseStatement(p: Parser): Node =
           p.advance()
 
       if p.current.kind == tkIn:
-        # It's a range loop! Reset and parse it
+        # It's a range loop
         p.pos = savedPos
         p.current = p.tokens[savedPos]
         return parseForRange(p)
-      else:
-        echo "  Not 'in', it's: ", p.current.kind
 
-    # Not a range loop, reset and parse as regular for
+      # Not a range loop, reset
+      p.pos = nextPos
+      p.current = p.tokens[nextPos]
+
+    # Reset to original position
     p.pos = savedPos
     p.current = p.tokens[savedPos]
-    return parseFor(p)
+
+    # Peek to see if next token is '('
+    if p.peek(1).kind == tkLParen:
+      # Three-part C-style for
+      return parseFor(p)
+    else:
+      # Go-style single-condition for
+      return parseFor(p)
   of tkReturn:
     return parseReturn(p)
   of tkSwitch:
@@ -1428,70 +1431,99 @@ proc parseFor(p: Parser): Node =
   if not p.expect(tkFor):
     return nil
 
-  # EXPECT OPENING PAREN
-  if not p.expectOrError(tkLParen, "Expected '(' after 'for'"):
-    return nil
-
-  # Parse initialization (optional)
-  var init: Node = nil
-  if p.current.kind == tkSemicolon:
-    p.advance()
-  elif p.current.kind == tkVar:
-    init = parseVarDeclNoSemi(p)
-    if not p.expect(tkSemicolon):
-      echo "Error: Expected ';' after for init at line ", line, ":", col
+  # Check if next is '(' for C-style or expression for Go-style
+  if p.current.kind == tkLParen:
+    # C-style: for (init; condition; update) { ... }
+    if not p.expect(tkLParen):
       return nil
-  else:
-    init = parseExpression(p)
-    if init != nil:
+
+    # Parse initialization (optional)
+    var init: Node = nil
+    if p.current.kind == tkSemicolon:
+      p.advance()
+    elif p.current.kind == tkVar:
+      init = parseVarDeclNoSemi(p)
       if not p.expect(tkSemicolon):
         echo "Error: Expected ';' after for init at line ", line, ":", col
         return nil
     else:
-      discard p.expect(tkSemicolon)
+      init = parseExpression(p)
+      if init != nil:
+        if not p.expect(tkSemicolon):
+          echo "Error: Expected ';' after for init at line ", line, ":", col
+          return nil
+      else:
+        discard p.expect(tkSemicolon)
 
-  # Parse condition (optional)
-  var condition: Node = nil
-  if p.current.kind == tkSemicolon:
-    p.advance()
-  else:
-    condition = parseExpression(p)
-    if condition != nil:
-      if not p.expect(tkSemicolon):
-        echo "Error: Expected ';' after for condition at line ", line, ":", col
-        return nil
+    # Parse condition (optional)
+    var condition: Node = nil
+    if p.current.kind == tkSemicolon:
+      p.advance()
     else:
-      discard p.expect(tkSemicolon)
+      condition = parseExpression(p)
+      if condition != nil:
+        if not p.expect(tkSemicolon):
+          echo "Error: Expected ';' after for condition at line ", line, ":", col
+          return nil
+      else:
+        discard p.expect(tkSemicolon)
 
-  # Parse update (optional)
-  var update: Node = nil
-  if p.current.kind == tkRParen:
-    discard
-  else:
-    update = parseExpression(p)
-    if update == nil:
+    # Parse update (optional)
+    var update: Node = nil
+    if p.current.kind == tkRParen:
       discard
+    else:
+      update = parseExpression(p)
+      if update == nil:
+        discard
 
-  # EXPECT CLOSING PAREN
-  if not p.expectOrError(tkRParen, "Expected ')' after for clauses"):
-    return nil
+    # Expect closing paren
+    if not p.expectOrError(tkRParen, "Expected ')' after for clauses"):
+      return nil
 
-  # Parse body
-  let body = parseBlock(p)
-  if body == nil:
-    echo "Error: Expected for loop body at line ", line, ":", col
-    return nil
+    # Parse body
+    let body = parseBlock(p)
+    if body == nil:
+      echo "Error: Expected for loop body at line ", line, ":", col
+      return nil
 
-  return Node(
-    kind: nkFor,
-    line: line,
-    col: col,
-    nodeKind: nkFor,
-    forInit: init,
-    forCondition: condition,
-    forUpdate: update,
-    forBody: body,
-  )
+    return Node(
+      kind: nkFor,
+      line: line,
+      col: col,
+      nodeKind: nkFor,
+      forInit: init,
+      forCondition: condition,
+      forUpdate: update,
+      forBody: body,
+    )
+  else:
+    # Go-style: for condition { ... } or for { ... } (infinite)
+    var condition: Node = nil
+
+    # Check for empty condition (infinite loop)
+    if p.current.kind != tkLBrace:
+      condition = parseExpression(p)
+      if condition == nil:
+        echo "Error: Expected condition or '{' in for loop at line ", line, ":", col
+        return nil
+
+    # Parse body
+    let body = parseBlock(p)
+    if body == nil:
+      echo "Error: Expected for loop body at line ", line, ":", col
+      return nil
+
+    return Node(
+      kind: nkFor,
+      line: line,
+      col: col,
+      nodeKind: nkFor,
+      forInit: nil,
+      forCondition: condition, # nil for infinite loop
+      forUpdate: nil,
+      forBody: body,
+    )
 
 # =========================== FOR RANGE LOOP PARSER ============================
 proc parseForRange(p: Parser): Node =

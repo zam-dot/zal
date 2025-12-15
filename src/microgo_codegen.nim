@@ -95,35 +95,45 @@ proc generateGroup(node: Node, context: CodegenContext): string =
 
 # =========================== LOOP GENERATORS ============================
 proc generateFor(node: Node, context: CodegenContext): string =
-  var code = "for ("
+  var code = ""
 
-  # Initialization
-  if node.forInit != nil:
-    case node.forInit.kind
-    of nkVarDecl:
-      code &=
-        "int " & node.forInit.varName & " = " & generateExpression(
-          node.forInit.varValue
-        )
-    of nkAssignment:
-      code &=
-        generateExpression(node.forInit.left) & " = " &
-        generateExpression(node.forInit.right)
-    else:
-      code &= generateExpression(node.forInit)
-  code &= "; "
+  # Check what type of for loop this is
+  if node.forInit == nil and node.forCondition != nil and node.forUpdate == nil:
+    # Go-style: for condition { ... } -> while (condition) { ... }
+    code = "while (" & generateExpression(node.forCondition) & ") {\n"
+  elif node.forInit == nil and node.forCondition == nil and node.forUpdate == nil:
+    # Go-style infinite loop: for { ... } -> while (1) { ... }
+    code = "while (1) {\n"
+  else:
+    # C-style three-part for loop
+    code = "for ("
 
-  # Condition
-  if node.forCondition != nil:
-    code &= generateExpression(node.forCondition)
-  code &= "; "
+    # Initialization
+    if node.forInit != nil:
+      case node.forInit.kind
+      of nkVarDecl:
+        code &=
+          "int " & node.forInit.varName & " = " &
+          generateExpression(node.forInit.varValue)
+      of nkAssignment:
+        code &=
+          generateExpression(node.forInit.left) & " = " &
+          generateExpression(node.forInit.right)
+      else:
+        code &= generateExpression(node.forInit)
+    code &= "; "
 
-  # Update
-  if node.forUpdate != nil:
-    code &= generateExpression(node.forUpdate)
-  code &= ") {\n"
+    # Condition
+    if node.forCondition != nil:
+      code &= generateExpression(node.forCondition)
+    code &= "; "
 
-  # Body
+    # Update
+    if node.forUpdate != nil:
+      code &= generateExpression(node.forUpdate)
+    code &= ") {\n"
+
+  # Generate body
   let bodyCode = generateBlock(node.forBody, cgFunction)
   for line in bodyCode.splitLines:
     if line.len > 0:
@@ -132,6 +142,7 @@ proc generateFor(node: Node, context: CodegenContext): string =
   code &= "}\n"
   return indentLine(code, context)
 
+# =========================== RANGE GENERATORS ============================
 proc generateForRange(node: Node, context: CodegenContext): string =
   if node.rangeTarget == nil:
     return indentLine("/* ERROR: No range target */\n", context)
@@ -601,7 +612,9 @@ proc generateBlock(node: Node, context: CodegenContext): string =
       of nkIf:
         stmtCode = generateIf(stmt, context)
       of nkFor:
-        stmtCode = generateFor(stmt, context)
+        stmtCode = generateFor(stmt, context) # <-- FIXED!
+      of nkForRange:
+        stmtCode = generateForRange(stmt, cgFunction)
       of nkSwitch:
         stmtCode = generateSwitch(stmt, context)
       else:
@@ -693,7 +706,7 @@ proc generateFunction(node: Node): string =
         of nkIf:
           code &= generateIf(stmt, cgFunction)
         of nkFor:
-          code &= generateIf(stmt, cgFunction)
+          code &= generateFor(stmt, cgFunction)
         of nkForRange: # <-- ADD THIS!
           code &= generateForRange(stmt, cgFunction)
         of nkSwitch:

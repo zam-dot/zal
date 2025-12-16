@@ -5,74 +5,74 @@ import std/[tables, strutils]
 type
   TokenKind* = enum
     # Keywords
-    tkFor = "for"
-    tkFunc = "func"
-    tkIf = "if"
-    tkElse = "else"
-    tkReturn = "return"
-    tkStruct = "struct"
-    tkVar = "var"
-    tkConst = "const"
-    tkPrint = "print"
-    tkIntType = "int"
-    tkFloatType = "float"
-    tkStringType = "string"
-    tkBoolType = "bool"
-    tkGetMem = "getmem"
-    tkFreeMem = "freemem"
-    tkSizeOf = "sizeof"
-    tkSwitch = "switch"
-    tkCase = "case"
-    tkDefault = "default"
-    tkNil = "nil"
-    tkLen = "len"
-    tkSizeTType = "size_t"
-    tkDefer = "defer"
-    tkAlloc = "alloc"
-    tkIn = "in"
-    tkDotDot = ".."
+    tkFor =          "for"
+    tkFunc =         "func"
+    tkIf =           "if"
+    tkElse =         "else"
+    tkReturn =       "return"
+    tkStruct =       "struct"
+    tkVar =          "var"
+    tkConst =        "const"
+    tkPrint =        "print"
+    tkIntType =      "int"
+    tkFloatType =    "float"
+    tkStringType =   "string"
+    tkBoolType =     "bool"
+    tkGetMem =       "getmem"
+    tkFreeMem =      "freemem"
+    tkSizeOf =       "sizeof"
+    tkSwitch =       "switch"
+    tkCase =         "case"
+    tkDefault =      "default"
+    tkNil =          "nil"
+    tkLen =          "len"
+    tkSizeTType =    "size_t"
+    tkDefer =        "defer"
+    tkAlloc =        "alloc"
+    tkIn =           "in"
+    tkDotDot =       ".."
 
     # Literals and identifiers
-    tkIdent = "identifier"
-    tkIntLit = "integer"
-    tkFloatLit = "floatlit"
-    tkStringLit = "strlit"
-    tkNumber = "number"
-    tkCharLit = "character"
+    tkIdent =       "identifier"
+    tkIntLit =      "integer"
+    tkFloatLit =    "floatlit"
+    tkStringLit =   "strlit"
+    tkNumber =      "number"
+    tkCharLit =     "character"
 
     # Operators and punctuation
-    tkAssign = "="
-    tkColon = ":"
-    tkComma = ","
-    tkDot = "."
-    tkSemicolon = ";"
-    tkPlus = "+"
-    tkMinus = "-"
-    tkStar = "*"
-    tkModulus = "%"
-    tkSlash = "/"
-    tkEq = "=="
-    tkNe = "!="
-    tkLt = "<"
-    tkGt = ">"
-    tkLe = "<="
-    tkGe = ">="
+    tkAssign =      "="
+    tkColon =       ":"
+    tkComma =       ","
+    tkDot =         "."
+    tkSemicolon =   ";"
+    tkPlus =        "+"
+    tkMinus =       "-"
+    tkStar =        "*"
+    tkModulus =     "%"
+    tkSlash =       "/"
+    tkEq =          "=="
+    tkNe =          "!="
+    tkLt =          "<"
+    tkGt =          ">"
+    tkLe =          "<="
+    tkGe =          ">="
     tkColonAssign = ":="
-    tkAnd = "&&"
-    tkOr = "||"
+    tkAnd =         "&&"
+    tkOr =          "||"
 
     # Brackets
-    tkLParen = "("
-    tkRParen = ")"
-    tkLBrace = "{"
-    tkRBrace = "}"
-    tkLBracket = "["
-    tkRBracket = "]"
+    tkLParen =      "("
+    tkRParen =      ")"
+    tkLBrace =      "{"
+    tkRBrace =      "}"
+    tkLBracket =    "["
+    tkRBracket =    "]"
 
     # Special
-    tkEOF = "EOF"
-    tkError = "error"
-    tkCBlock = "cblock" # For @c { ... }
+    tkEOF =         "EOF"
+    tkError =       "error"
+    tkCBlock =      "cblock" 
 
   Token* = ref object
     kind*: TokenKind
@@ -82,58 +82,57 @@ type
     of true:
       strVal*: string
       numVal*: float
-    else:
-      discard
+    else: discard
 
 # Keyword lookup table
 const Keywords = {
-  "for": tkFor,
-  "func": tkFunc,
-  "if": tkIf,
-  "else": tkElse,
-  "struct": tkStruct,
-  "var": tkVar,
-  "const": tkConst,
-  "print": tkPrint,
-  "return": tkReturn,
-  "getmem": tkGetMem,
-  "freemem": tkFreeMem,
-  "free": tkFreeMem,
-  "sizeof": tkSizeOf,
-  "int": tkIntType,
-  "float": tkFloatType,
-  "string": tkStringType,
-  "bool": tkBoolType,
-  "size_t": tkSizeTType,
-  "switch": tkSwitch,
-  "case": tkCase,
-  "default": tkDefault,
-  "error": tkError,
-  "nil": tkNil,
-  "len": tkLen,
-  "defer": tkDefer,
-  "alloc": tkAlloc,
-  "in": tkIn,
+  "for":      tkFor,
+  "func":     tkFunc,
+  "if":       tkIf,
+  "else":     tkElse,
+  "struct":   tkStruct,
+  "var":      tkVar,
+  "const":    tkConst,
+  "print":    tkPrint,
+  "return":   tkReturn,
+  "getmem":   tkGetMem,
+  "freemem":  tkFreeMem,
+  "free":     tkFreeMem,
+  "sizeof":   tkSizeOf,
+  "int":      tkIntType,
+  "float":    tkFloatType,
+  "string":   tkStringType,
+  "bool":     tkBoolType,
+  "size_t":   tkSizeTType,
+  "switch":   tkSwitch,
+  "case":     tkCase,
+  "default":  tkDefault,
+  "error":    tkError,
+  "nil":      tkNil,
+  "len":      tkLen,
+  "defer":    tkDefer,
+  "alloc":    tkAlloc,
+  "in":       tkIn,
 }.toTable
 
 # =========================== HELPER FUNCTIONS ============================
 proc createToken(
-    kind: TokenKind,
-    lexeme: string,
-    line, col: int,
-    isLiteral: bool = false,
-    strVal: string = "",
-    numVal: float = 0.0,
+    kind:         TokenKind,
+    lexeme:       string,
+    line, col:    int,
+    isLiteral:    bool = false,
+    strVal:       string = "",
+    numVal:       float = 0.0,
 ): Token =
   if isLiteral:
     Token(
-      kind: kind,
-      lexeme: lexeme,
-      line: line,
-      col: col,
-      isLiteral: true,
-      strVal: strVal,
-      numVal: numVal,
+      kind:       kind,
+      lexeme:     lexeme,
+      line:       line,
+      col:        col,
+      isLiteral:  true,
+      strVal:     strVal,
+      numVal:     numVal,
     )
   else:
     Token(kind: kind, lexeme: lexeme, line: line, col: col, isLiteral: false)
@@ -149,7 +148,6 @@ proc scanIdentifier(source: string, i: var int, line, col: var int): Token =
     lexeme = source[start ..< i]
     kind = Keywords.getOrDefault(lexeme, tkIdent)
     tokenCol = col - lexeme.len
-
   createToken(kind, lexeme, line, tokenCol)
 
 # =========================== SCAN NUMBER ============================
@@ -163,8 +161,7 @@ proc scanNumber(source: string, i: var int, line, col: var int): Token =
     inc(col)
 
   # Decimal point?
-  if i < source.len and source[i] == '.' and i + 1 < source.len and
-      source[i + 1] in {'0' .. '9'}:
+  if i < source.len and source[i] == '.' and i + 1 < source.len and source[i + 1] in {'0' .. '9'}:
     isFloat = true
     inc(i)
     inc(col)
@@ -207,18 +204,12 @@ proc scanString(source: string, i: var int, line, col: var int): Token =
       inc(col)
       if i < source.len:
         case source[i]
-        of 'n':
-          strVal.add('\n')
-        of 't':
-          strVal.add('\t')
-        of 'r':
-          strVal.add('\r')
-        of '"':
-          strVal.add('"')
-        of '\\':
-          strVal.add('\\')
-        else:
-          strVal.add('\\')
+        of 'n':   strVal.add('\n')
+        of 't':   strVal.add('\t')
+        of 'r':   strVal.add('\r')
+        of '"':   strVal.add('"')
+        of '\\':  strVal.add('\\')
+        else:     strVal.add('\\')
       inc(i)
       inc(col)
     else:
@@ -229,7 +220,6 @@ proc scanString(source: string, i: var int, line, col: var int): Token =
   if i >= source.len:
     return createToken(tkError, "Unterminated string", startLine, startCol)
 
-  # Skip closing quote
   inc(i)
   inc(col)
 
@@ -241,16 +231,13 @@ proc scanCharLiteral(source: string, i: var int, line, col: var int): Token =
     startLine = line
     startCol = col
 
-  # Skip opening quote
   inc(i)
   inc(col)
 
   if i >= source.len:
     return createToken(tkError, "Unterminated character literal", startLine, startCol)
 
-  var charVal = '\0'
-
-  # Handle escape sequences
+  var charVal =   '\0'
   if source[i] == '\\':
     inc(i)
     inc(col)
@@ -258,35 +245,24 @@ proc scanCharLiteral(source: string, i: var int, line, col: var int): Token =
       return createToken(tkError, "Unterminated escape sequence", startLine, startCol)
 
     case source[i]
-    of 'n':
-      charVal = '\n'
-    of 't':
-      charVal = '\t'
-    of 'r':
-      charVal = '\r'
-    of '\'':
-      charVal = '\''
-    of '\\':
-      charVal = '\\'
-    of '0':
-      charVal = '\0'
-    else:
-      # Unknown escape - just use the character
-      charVal = source[i]
+    of 'n':   charVal = '\n'
+    of 't':   charVal = '\t'
+    of 'r':   charVal = '\r'
+    of '\'':  charVal = '\''
+    of '\\':  charVal = '\\'
+    of '0':   charVal = '\0'
+    else:     charVal = source[i]
 
     inc(i)
     inc(col)
   else:
-    # Regular character
     charVal = source[i]
     inc(i)
     inc(col)
 
-  # Expect closing quote
   if i >= source.len or source[i] != '\'':
     return createToken(tkError, "Expected closing quote", startLine, startCol)
 
-  # Skip closing quote
   inc(i)
   inc(col)
 
@@ -294,32 +270,28 @@ proc scanCharLiteral(source: string, i: var int, line, col: var int): Token =
 
 # =========================== SCAN C BLOCK ============================
 proc scanCBlock(source: string, i: var int, line, col: var int): Token =
-  let startLine = line
-  let startCol = col
+  let
+    startLine = line
+    startCol = col
 
   inc(i)
   inc(col)
   inc(i)
   inc(col)
 
-  # Skip optional whitespace
   while i < source.len and source[i] in {' ', '\t', '\n', '\r'}:
     if source[i] == '\n':
       inc(line)
       col = 1
-    else:
-      inc(col)
+    else: inc(col)
     inc(i)
 
-  # Expect {
   if i >= source.len or source[i] != '{':
     return createToken(tkError, "Expected '{' after @c", line, col)
 
-  # Skip the {
   inc(i)
   inc(col)
 
-  # Capture everything until matching }
   var
     cCode = ""
     braceCount = 1
@@ -332,8 +304,7 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
       dec(braceCount)
       if braceCount > 0:
         cCode.add(source[i])
-    else:
-      cCode.add(source[i])
+    else: cCode.add(source[i])
 
     inc(i)
     inc(col)
@@ -352,25 +323,14 @@ proc lex*(source: string): seq[Token] =
     let ch = source[i]
 
     case ch
-    of 'a' .. 'z', 'A' .. 'Z', '_':
-      tokens.add(scanIdentifier(source, i, line, col))
-    of '0' .. '9':
-      tokens.add(scanNumber(source, i, line, col))
-    of '"':
-      tokens.add(scanString(source, i, line, col))
+    of 'a' .. 'z', 'A' .. 'Z', '_': tokens.add(scanIdentifier(source, i, line, col))
+    of '0' .. '9': tokens.add(scanNumber(source, i, line, col))
+    of '"': tokens.add(scanString(source, i, line, col))
     of '@':
-      if i + 1 < source.len and source[i + 1] == 'c':
-        tokens.add(scanCBlock(source, i, line, col))
+      if i + 1 < source.len and source[i + 1] == 'c': tokens.add(scanCBlock(source, i, line, col))
       else:
-        tokens.add(
-          createToken(
-            tkError,
-            "Unexpected character after @: " &
-              (if i + 1 < source.len: $source[i + 1] else: "EOF"),
-            line,
-            col,
-          )
-        )
+        tokens.add(createToken(tkError, "Unexpected character after @: " & 
+        (if i + 1 < source.len: $source[i + 1] else: "EOF"), line, col, ))
         inc(i)
         inc(col)
     of '=':
@@ -509,29 +469,20 @@ proc lex*(source: string): seq[Token] =
       inc(line)
       col = 1
       inc(i)
-    of '\'':
-      tokens.add(scanCharLiteral(source, i, line, col))
+    of '\'': tokens.add(scanCharLiteral(source, i, line, col))
     else:
       tokens.add(createToken(tkError, "Unexpected character: " & ch, line, col))
       inc(i)
       inc(col)
 
-  # Add EOF marker
   tokens.add(createToken(tkEOF, "", line, col))
   return tokens
 
 # =========================== UTILITIES ============================
 proc `$`*(token: Token): string =
   case token.kind
-  of tkStringLit:
-    "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ", \"" &
-      token.strVal & "\")"
-  of tkIntLit, tkFloatLit:
-    "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ", " &
-      $token.numVal & ")"
+  of tkStringLit: "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ", \"" & token.strVal & "\")"
+  of tkIntLit, tkFloatLit: "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ", " & $token.numVal & ")"
   else:
-    if token.lexeme.len > 0:
-      "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ", '" &
-        token.lexeme & "')"
-    else:
-      "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ")"
+    if token.lexeme.len > 0: "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ", '" & token.lexeme & "')"
+    else: "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ")"

@@ -10,48 +10,42 @@ proc resolveImports(source: string, baseDir: string): string =
     output = ""
     inCBlock = false
     i = 0
-  let lines = source.splitLines()
 
-  while i < lines.len:
-    let
-      line = lines[i]
-      trimmed = line.strip()
+  while i < source.splitLines().len:
+    let line = source.splitLines()[i]
 
-    # Skip completely empty lines in source
-    if trimmed.len == 0:
+    if line.strip().len == 0:
       inc(i)
       continue
 
-    # Track if we're inside @c { ... }
-    if trimmed.startsWith("@c") and "{" in trimmed:
+    if line.strip().startsWith("@c") and "{" in line.strip():
       inCBlock = true
       output &= line & "\n"
-    elif inCBlock and trimmed == "}":
+
+    elif inCBlock and line.strip() == "}":
       inCBlock = false
       output &= line & "\n"
-    elif not inCBlock and trimmed.startsWith("@include"):
+    
+    elif not inCBlock and line.strip().startsWith("@include"):
       # Process include OUTSIDE @c block
-      let parts = trimmed.splitWhitespace(maxSplit = 1)
+      let parts = line.strip().splitWhitespace(maxSplit = 1)
       if parts.len >= 2:
         var filename = parts[1].strip()
         filename = filename.strip(chars = {'"', '\''})
 
         let fullPath = baseDir / filename
-        if fileExists(fullPath):
+        if fileExists(baseDir / filename):
           let
-            included = readFile(fullPath)
-            includedDir = fullPath.parentDir()
+            included = readFile(baseDir / filename)
+            includedDir = baseDir / filename.parentDir()
             resolved = resolveImports(included, includedDir)
 
-          # Add the included content WITHOUT extra blank lines
           if resolved.strip().len > 0:
             output &= resolved.strip() & "\n\n"
         else:
-          echo "ERROR: @include file not found: ", fullPath
+          echo "ERROR: @include file not found: ", baseDir / filename
           output &= line & "\n"
-    else:
-      # Regular line
-      output &= line & "\n"
+    else: output &= line & "\n"
 
     inc(i)
 
@@ -61,10 +55,8 @@ proc resolveImports(source: string, baseDir: string): string =
 proc compileToC(source: string, filename: string = ""): string =
   # Resolve imports before compiling
   let baseDir =
-    if filename.len > 0:
-      filename.parentDir()
-    else:
-      getCurrentDir()
+    if filename.len > 0: filename.parentDir()
+    else: getCurrentDir()
 
   let resolvedSource = resolveImports(source, baseDir)
 
@@ -74,8 +66,7 @@ proc compileToC(source: string, filename: string = ""): string =
     parser = newParser(tokens)
     ast = parseProgram(parser)
 
-  if ast == nil:
-    raise newException(ValueError, "Parsing failed!")
+  if ast == nil: raise newException(ValueError, "Parsing failed!")
   return generateC(ast)
 
 # =========================== FORMAT CODE ================================
@@ -84,10 +75,8 @@ proc formatCode(cCode: string, filename: string): string =
   writeFile(tmpFile, cCode)
 
   let formatResult = execShellCmd("clang-format -i " & tmpFile & " 2>/dev/null")
-  if formatResult == 0:
-    result = readFile(tmpFile)
-  else:
-    result = cCode
+  if formatResult == 0: result = readFile(tmpFile)
+  else: result = cCode
 
   removeFile(tmpFile)
   return result
@@ -120,13 +109,11 @@ proc compileFile(filename: string, runImmediately: bool = true): bool =
     cCode = compileToC(source, filename)
 
   var baseName = filename
-  if filename.endsWith(".mg"):
-    baseName = filename[0 ..^ 4]
+  if filename.endsWith(".mg"): baseName = filename[0 ..^ 4]
 
   # Extract just the filename without path
   var justFilename = extractFilename(baseName)
-  if justFilename.endsWith(".mg"):
-    justFilename = justFilename[0 ..^ 4]
+  if justFilename.endsWith(".mg"): justFilename = justFilename[0 ..^ 4]
 
   let
     cFilename = justFilename & ".c"
@@ -137,12 +124,9 @@ proc compileFile(filename: string, runImmediately: bool = true): bool =
   echo "Generated ", cFilename
 
   if runImmediately:
-    if compileAndRun(cFilename):
-      return true
-    else:
-      return false
-  else:
-    return true
+    if compileAndRun(cFilename): return true
+    else: return false
+  else: return true
 
 # =========================== SHOW USAGE ================================
 proc showUsage() =
@@ -201,7 +185,6 @@ func main() {
     print("Hello from MicroGo!\n")
 }
 """
-
   writeFile(projectDir / "src" / "main.mg", mainContent)
 
   # Create Makefile
@@ -237,7 +220,6 @@ clean:
 
 .PHONY: all build run clean
 """
-
   writeFile(projectDir / "Makefile", makefileContent)
 
 # ============================= MAIN ======================================
@@ -253,22 +235,22 @@ proc main() =
     if paramCount() >= 2:
       let projectName = paramStr(2)
       initProject(projectName)
-    else:
-      initProject()
+    else: initProject()
+
   of "run":
     if paramCount() < 2:
       echo "Usage: microgo run <file.mg>"
       quit(1)
     let filename = paramStr(2)
-    if not runFile(filename):
-      quit(1)
+    if not runFile(filename): quit(1)
+
   of "build":
     if paramCount() < 2:
       echo "Usage: microgo build <file.mg>"
       quit(1)
     let filename = paramStr(2)
-    if not buildFile(filename):
-      quit(1)
+    if not buildFile(filename): quit(1)
+
   of "--help", "-h":
     showUsage()
     quit(0)
@@ -279,8 +261,7 @@ proc main() =
       quit(1)
     else:
       let filename = command
-      if not runFile(filename):
-        quit(1)
+      if not runFile(filename): quit(1)
 
 when isMainModule:
   main()

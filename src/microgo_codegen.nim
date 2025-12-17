@@ -17,7 +17,6 @@ proc indentLine(code: string, context: CodegenContext): string =
     code
 
 proc escapeString(str: string): string =
-  ## Escape special characters for C string literals
   for ch in str:
     case ch
     of '\n': result &= "\\n"
@@ -43,10 +42,8 @@ proc generateLiteral(node: Node): string =
   case node.kind
   of nkLiteral:
     if node.literalValue == "NULL": "NULL" else: node.literalValue
-  of nkStringLit:
-    "\"" & escapeString(node.literalValue) & "\""
-  else:
-    ""
+  of nkStringLit: "\"" & escapeString(node.literalValue) & "\""
+  else: ""
 
 proc generateIdentifier(node: Node): string =
   node.identName
@@ -69,8 +66,7 @@ proc generateExpression(node: Node): string =
   of nkArrayType: result = generateArrayType(node)
   of nkLiteral, nkStringLit: result = generateLiteral(node)
   of nkGroup: result = "(" & generateExpression(node.groupExpr) & ")"
-  else:
-    result = "/* ERROR: unhandled expression */"
+  else: result = "/* ERROR: unhandled expression */"
 
 # =========================== GROUP GENERATORS ============================
 proc generateGroup(node: Node, context: CodegenContext): string =
@@ -89,13 +85,8 @@ proc generateFor(node: Node, context: CodegenContext): string =
     if node.forInit != nil:
       case node.forInit.kind
 
-      of nkVarDecl:
-        code &= "int " & node.forInit.varName & " = " &
-          generateExpression(node.forInit.varValue)
-      
-      of nkAssignment:
-        code &= generateExpression(node.forInit.left) & " = " &
-          generateExpression(node.forInit.right)
+      of nkVarDecl: code &= "int " & node.forInit.varName & " = " & generateExpression(node.forInit.varValue)
+      of nkAssignment: code &= generateExpression(node.forInit.left) & " = " & generateExpression(node.forInit.right)
       
       else: code &= generateExpression(node.forInit)
     code &= "; "
@@ -129,16 +120,11 @@ proc generateForRange(node: Node, context: CodegenContext): string =
   var code = ""
 
   if isRange:
-    if node.rangeValue != nil:
-      code = "for (int " & node.rangeValue.identName & " = " & startVal & "; " &
-        node.rangeValue.identName & " <= " & endVal & "; " & node.rangeValue.identName &
-        "++) {\n"
-    elif node.rangeIndex != nil:
-      code = "for (int " & node.rangeIndex.identName & " = " & startVal & "; " &
-        node.rangeIndex.identName & " <= " & endVal & "; " & node.rangeIndex.identName &
-        "++) {\n"
-    else:
-      code = "for (int _i = " & startVal & "; _i <= " & endVal & "; _i++) {\n"
+    if node.rangeValue != nil: code = "for (int " & node.rangeValue.identName & " = " & startVal & "; " &
+        node.rangeValue.identName & " <= " & endVal & "; " & node.rangeValue.identName & "++) {\n"
+    elif node.rangeIndex != nil: code = "for (int " & node.rangeIndex.identName & " = " & startVal & "; " &
+        node.rangeIndex.identName & " <= " & endVal & "; " & node.rangeIndex.identName & "++) {\n"
+    else: code = "for (int _i = " & startVal & "; _i <= " & endVal & "; _i++) {\n"
   else:
     let target    = generateExpression(node.rangeTarget)
     var isString  = false
@@ -146,8 +132,7 @@ proc generateForRange(node: Node, context: CodegenContext): string =
     if node.rangeTarget.kind == nkStringLit: isString = true
     elif node.rangeTarget.kind == nkIdentifier:
       let name = node.rangeTarget.identName
-      if name == "s" or name == "str" or name == "text" or name.endsWith("Str") or name.endsWith("String"):
-        isString = true
+      if name == "s" or name == "str" or name == "text" or name.endsWith("Str") or name.endsWith("String"): isString = true
     elif target.startsWith("\"") or target.contains("char*"): isString = true
 
     if isString:
@@ -158,17 +143,14 @@ proc generateForRange(node: Node, context: CodegenContext): string =
       code = "for (int _i = 0; _i < (int)(sizeof(" & target & ") / sizeof(" & target & "[0])); _i++) {\n"
 
       if node.rangeIndex != nil: code &= "  int " & node.rangeIndex.identName & " = _i;\n"
-
       if node.rangeValue != nil:
         var elemType = "int" 
         if node.rangeTarget.kind == nkArrayLit and node.rangeTarget.elements.len > 0:
           let firstElem = node.rangeTarget.elements[0]
           if firstElem.kind == nkStringLit: elemType = "char*"
           elif firstElem.kind == nkLiteral:
-            if firstElem.literalValue.contains('.') or
-                firstElem.literalValue.contains('e') or
-                firstElem.literalValue.contains('E'):
-              elemType = "double"
+            if firstElem.literalValue.contains('.') or firstElem.literalValue.contains('e') or
+                firstElem.literalValue.contains('E'): elemType = "double"
 
         code &= "  " & elemType & " " & node.rangeValue.identName & " = " & target & "[_i];\n"
 
@@ -184,9 +166,8 @@ proc generateForRange(node: Node, context: CodegenContext): string =
 proc generateCBlock(node: Node, context: CodegenContext): string =
   var cCode = node.cCode.strip(leading = false, trailing = true)
 
-  let looksLikeFunction =
-    ( " int " in cCode or " void " in cCode or " char " in cCode or " float " in cCode or
-      " double " in cCode ) and "(" in cCode and "){" in cCode
+  let looksLikeFunction = (" int " in cCode or " void " in cCode or " char " in cCode or " float " in cCode or
+                           " double " in cCode) and "(" in cCode and "){" in cCode
 
   if looksLikeFunction and context != cgGlobal:
     if context == cgFunction: result = cCode.replace("\n", "\n  ")
@@ -200,9 +181,8 @@ proc inferTypeFromExpression(node: Node): string =
   case node.kind
   of nkLiteral:
     let val = node.literalValue
-    if val == "NULL": return "void*"  # CHANGED from "char*" to "void*"
-    if val.contains('.') or val.contains('e') or val.contains('E'): 
-      return "double"
+    if val == "NULL": return "void*" 
+    if val.contains('.') or val.contains('e') or val.contains('E'): return "double"
     else:
       if val == "true" or val == "false": return "bool"
       return "int"
@@ -236,39 +216,35 @@ proc inferTypeFromExpression(node: Node): string =
 
 # =========================== VARIABLE DECLARATION ============================
 proc generateVarDecl(node: Node, context: CodegenContext): string =
-  # Check for comma in varName (multiple returns)
   if ',' in node.varName:
-    let names = node.varName.split(',')
-    let firstName = names[0].strip()
-    let secondName = names[1].strip()
-    
+    let 
+      names      = node.varName.split(',')
+      firstName  = names[0].strip()
+      secondName = names[1].strip()
+ 
     var code = ""
     
     if node.varValue != nil and node.varValue.kind == nkCall:
       let funcCall = node.varValue
       
-      # Check if we have special type format "int,char*"
       if ',' in node.varType:
-        let types = node.varType.split(',')
-        let firstType = types[0].strip()  # e.g., "int"
-        let secondType = types[1].strip() # e.g., "char*"
+        let types      = node.varType.split(',')
+        let firstType  = types[0].strip() 
+        let secondType = types[1].strip()
         
-        # Initialize error variable with correct type
         code = secondType & " " & secondName & " = NULL;\n"
         code &= firstType & " " & firstName & " = " & 
-               generateCall(funcCall, cgExpression, secondName) & ";\n"
-        
+             generateCall(funcCall, cgExpression, secondName) & ";\n"
         return indentLine(code, context)
       else:
-        # Fallback to old logic
         code = "char* " & secondName & " = NULL;\n"
         code &= "int " & firstName & " = " & 
-               generateCall(funcCall, cgExpression, secondName) & ";\n"
+             generateCall(funcCall, cgExpression, secondName) & ";\n"
         return indentLine(code, context)
   
   var
     typeName = node.varType
-    isArray = false
+    isArray  = false
     isString = false
 
   if typeName.len == 0 and node.varValue != nil:
@@ -338,7 +314,6 @@ proc generateConstDecl(node: Node, context: CodegenContext): string =
     else: discard
 
   if constExpr == "0": constExpr = generateExpression(node.constValue)
-
   if context == cgFunction:
     var code = "const " & constType & " " & node.constName & " = " & constExpr & ";\n"
     return indentLine(code, context)
@@ -358,13 +333,13 @@ proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): s
       
       var typeName = "int" 
       if typeArg.kind == nkIdentifier: typeName = typeArg.identName
-      callCode = "malloc(" & generateExpression(countArg) & " * sizeof(" & typeName & "))"
+      callCode     = "malloc(" & generateExpression(countArg) & " * sizeof(" & typeName & "))"
     else: callCode = "malloc(0)"
   
   of "len":
     if node.callArgs.len == 1:
-      let arg = generateExpression(node.callArgs[0])
-      callCode = "sizeof(" & arg & ") / sizeof(" & arg & "[0])"
+      let arg      = generateExpression(node.callArgs[0])
+      callCode     = "sizeof(" & arg & ") / sizeof(" & arg & "[0])"
     else: callCode = "0 /* len() error */"
   
   of "getmem":
@@ -373,8 +348,8 @@ proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): s
   
   of "free", "freemem":
     if node.callArgs.len > 0:
-      let arg = generateExpression(node.callArgs[0])
-      callCode = "free(" & arg & ")" 
+      let arg      = generateExpression(node.callArgs[0])
+      callCode     = "free(" & arg & ")" 
     else: callCode = "free(NULL)"
   
   of "print":
@@ -404,11 +379,9 @@ proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): s
         if i > 0: callCode &= ", "
         callCode &= generateExpression(arg)
     
-    # Add error parameter if provided
     if errorVar.len > 0:
       if node.callArgs.len > 0: callCode &= ", "
       callCode &= "&" & errorVar
-    
     callCode &= ")"
   
   if context != cgExpression:
@@ -433,28 +406,23 @@ proc generateReturn(node: Node, context: CodegenContext): string =
   var code = ""
   
   case node.callArgs.len
-  of 0:
-    code = "return;"
+  of 0: code = "return;"
   of 1:
     let retVal = generateExpression(node.callArgs[0])
     code = "return " & retVal & ";"
   of 2:
-    # return value, error;
-    let retVal = generateExpression(node.callArgs[0])
-    let errExpr = generateExpression(node.callArgs[1])
+    let 
+      retVal = generateExpression(node.callArgs[0])
+      errExpr = generateExpression(node.callArgs[1])
     
     if errExpr == "NULL" or errExpr == "nil" or errExpr == "0":
-      # No error
       code = "*error_out = NULL;\n"
       code &= "  return " & retVal & ";"
     else:
-      # Has error - errExpr should be a string literal
-      # For string literals like "negative value"
       code = "*error_out = " & errExpr & ";\n"
       code &= "  return " & retVal & ";"
   else:
     code = "return /* too many values */;"
-  
   return indentLine(code, context)
 
 # ============================ ARRAY TYPE GENERATORS ==========================
@@ -570,29 +538,22 @@ proc generateFunction(node: Node): string =
   if node.funcName == "main":
     code = "int main() {\n"
   else:
-    # Build function signature with error parameter if needed
     code = node.returnType & " " & node.funcName & "("
     
-    # Parameters
     if node.params.len > 0:
       for i, param in node.params:
         if i > 0: code &= ", "
         code &= param.varType & " " & param.varName
-    
-    # ADD ERROR PARAMETER IF FUNCTION RETURNS ERROR
     if node.returnsError:
       if node.params.len > 0: code &= ", "
       code &= "char** error_out"
     elif node.params.len == 0:
       code &= "void"
-    
     code &= ") {\n"
   
-  # Initialize error_out if needed
   if node.returnsError:
     code &= "  *error_out = NULL;\n"
   
-  # Rest of function body...
   var
     deferStack: seq[string] = @[]
     hasExplicitReturn = false
@@ -700,7 +661,7 @@ proc generateProgram(node: Node): string =
   # First pass: collect everything in correct order
   for funcNode in node.functions:
     case funcNode.kind
-    of nkStruct: structsCode &= generateStruct(funcNode)
+    of nkStruct:    structsCode &= generateStruct(funcNode)
     of nkConstDecl: defines &= generateConstDecl(funcNode, cgGlobal)
 
     of nkCBlock:
@@ -710,8 +671,6 @@ proc generateProgram(node: Node): string =
       if    "int main()" in cCode: hasCMain = true
 
     of nkFunction:
-      echo "DEBUG generateProgram: Found function ", funcNode.funcName, 
-           " returnsError=", funcNode.returnsError
       functionCode &= generateFunction(funcNode)
       if funcNode.funcName == "main": hasMicroGoMain = true
     

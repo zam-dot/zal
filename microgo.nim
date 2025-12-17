@@ -5,63 +5,189 @@ import src/microgo_codegen
 import std/[os, osproc, strutils]
 
 # ======================== RESOLVE IMPORTS ==============================
+# Forward declaration
+proc filterSelectiveImports(source: string, items: seq[string]): string
+
 proc resolveImports(source: string, baseDir: string): string =
   var
     output = ""
     inCBlock = false
     i = 0
 
-  while i < source.splitLines().len:
-    let line = source.splitLines()[i]
-
+  let lines = source.splitLines()
+  
+  while i < lines.len:
+    var line = lines[i]
+    
     if line.strip().len == 0:
       inc(i)
       continue
-
+    
     if line.strip().startsWith("@c") and "{" in line.strip():
       inCBlock = true
       output &= line & "\n"
-
+    
     elif inCBlock and line.strip() == "}":
       inCBlock = false
       output &= line & "\n"
     
     elif not inCBlock and line.strip().startsWith("@include"):
-      # Process include OUTSIDE @c block
-      let parts = line.strip().splitWhitespace(maxSplit = 1)
-      if parts.len >= 2:
-        var filename = parts[1].strip()
-        filename = filename.strip(chars = {'"', '\''})
+      let trimmed = line.strip()
+      var 
+        filename = ""
+        itemsToInclude: seq[string] = @[]
+        quoteChar = '\0'
+        startIdx = trimmed.find('"')
 
-        let fullPath = baseDir / filename
-        if fileExists(baseDir / filename):
-          let
-            included = readFile(baseDir / filename)
-            includedDir = baseDir / filename.parentDir()
-            resolved = resolveImports(included, includedDir)
-
-          if resolved.strip().len > 0:
-            output &= resolved.strip() & "\n\n"
+      if startIdx == -1:
+        startIdx = trimmed.find('\'')
+      
+      if startIdx != -1:
+        quoteChar = trimmed[startIdx]
+        var endIdx = trimmed.find(quoteChar, startIdx + 1)
+        if endIdx != -1:
+          filename = trimmed[startIdx+1 ..< endIdx]
+          
+          # Check for { item1, item2 } after filename
+          let afterFile = trimmed[endIdx+1 .. ^1].strip()
+          if afterFile.startsWith("{"):
+            var braceEnd = afterFile.find("}")
+            if braceEnd != -1:
+              let itemsStr = afterFile[1 ..< braceEnd].strip()
+              if itemsStr.len > 0:
+                for item in itemsStr.split(','):
+                  itemsToInclude.add(item.strip())
+      
+      if filename.len == 0:
+        output &= line & "\n"
+        inc(i)
+        continue
+      
+      let fullPath = baseDir / filename
+      if fileExists(fullPath):
+        let 
+          included = readFile(fullPath)
+          includedDir = baseDir / filename.parentDir()
+          resolved = resolveImports(included, includedDir)
+        
+        if itemsToInclude.len > 0:
+          let filtered = filterSelectiveImports(resolved, itemsToInclude)
+          if filtered.strip().len > 0: output &= filtered & "\n\n"
         else:
-          echo "ERROR: @include file not found: ", baseDir / filename
-          output &= line & "\n"
-    else: output &= line & "\n"
-
+          if resolved.strip().len > 0: output &= resolved & "\n\n"
+      else:
+        echo "ERROR: @include file not found: ", baseDir / filename
+        output &= line & "\n"
+    
+    else:
+      output &= line & "\n"
     inc(i)
-
+  
   return output.strip() & "\n"
+
+# ======================= FILTER SELECTIVE IMPORTS ======================
+proc filterSelectiveImports(source: string, items: seq[string]): string =
+  var 
+    output = ""
+    lines = source.splitLines()
+    i = 0
+    inTopLevelCBlock = false
+  
+  while i < lines.len:
+    let 
+      line = lines[i]
+      trimmed = line.strip()
+    
+    if trimmed.len == 0:
+      inc(i)
+      continue
+    
+    if trimmed.startsWith("@c") and "{" in trimmed:
+      if i == 0 or not lines[i-1].endsWith("{"):
+        inTopLevelCBlock = true
+        output &= line & "\n"
+        inc(i)
+        continue
+    
+    if inTopLevelCBlock:
+      output &= line & "\n"
+      if line.contains("}"):
+        inTopLevelCBlock = false
+      inc(i)
+      continue
+    
+    var 
+      shouldInclude = false
+      itemName = ""
+    
+    if trimmed.startsWith("const "):
+      let afterConst = trimmed[6..^1].strip()
+      var nameEnd = afterConst.find({' ', '=', ':'})
+      if nameEnd == -1: nameEnd = afterConst.len
+      itemName = afterConst[0..<nameEnd].strip()
+      
+    elif trimmed.startsWith("func "):
+      let afterFunc = trimmed[5..^1].strip()
+      var nameEnd = afterFunc.find({' ', '('})
+      if nameEnd == -1: nameEnd = afterFunc.len
+      itemName = afterFunc[0..<nameEnd].strip()
+      
+    elif trimmed.startsWith("var "):
+      let afterVar = trimmed[4..^1].strip()
+      var nameEnd = afterVar.find({' ', '=', ':'})
+      if nameEnd == -1: nameEnd = afterVar.len
+      itemName = afterVar[0..<nameEnd].strip()
+      
+    elif trimmed.startsWith("struct "):
+      let afterStruct = trimmed[7..^1].strip()
+      var nameEnd = afterStruct.find({' ', '{'})
+      if nameEnd == -1: nameEnd = afterStruct.len
+      itemName = afterStruct[0..<nameEnd].strip()
+
+    if itemName.len > 0 and items.contains(itemName): shouldInclude = true
+    
+    if shouldInclude:
+      var 
+        j = i
+        braceDepth = 0
+        inFunctionOrStruct = false
+      
+      if trimmed.startsWith("func ") or trimmed.startsWith("struct "): inFunctionOrStruct = true
+      
+      while j < lines.len:
+        let currentLine = lines[j]
+        output &= currentLine & "\n"
+        
+        if inFunctionOrStruct:
+          for ch in currentLine:
+            if ch == '{': braceDepth += 1
+            elif ch == '}': braceDepth -= 1
+        
+        if inFunctionOrStruct and braceDepth == 0 and j > i: break
+        
+        if not inFunctionOrStruct and j > i:
+          let nextTrimmed = currentLine.strip()
+          if (nextTrimmed.startsWith("const ") or 
+              nextTrimmed.startsWith("func ") or 
+              nextTrimmed.startsWith("var ") or 
+              nextTrimmed.startsWith("struct ") or
+              nextTrimmed.startsWith("@c")):
+            break
+        
+        inc(j)
+      i = j 
+    else: inc(i)
+  
+  return output
 
 # ======================== COMPILE TO C CODE =============================
 proc compileToC(source: string, filename: string = ""): string =
-  # Resolve imports before compiling
   let baseDir =
     if filename.len > 0: filename.parentDir()
     else: getCurrentDir()
 
-  let resolvedSource = resolveImports(source, baseDir)
-
-  # Then compile as normal
-  let
+  let 
+    resolvedSource = resolveImports(source, baseDir)
     tokens = lex(resolvedSource)
     parser = newParser(tokens)
     ast = parseProgram(parser)
@@ -111,7 +237,6 @@ proc compileFile(filename: string, runImmediately: bool = true): bool =
   var baseName = filename
   if filename.endsWith(".mg"): baseName = filename[0 ..^ 4]
 
-  # Extract just the filename without path
   var justFilename = extractFilename(baseName)
   if justFilename.endsWith(".mg"): justFilename = justFilename[0 ..^ 4]
 
@@ -119,7 +244,6 @@ proc compileFile(filename: string, runImmediately: bool = true): bool =
     cFilename = justFilename & ".c"
     formattedCCode = formatCode(cCode, cFilename)
 
-  # Write to current directory (better for project structure)
   writeFile(cFilename, formattedCCode)
   echo "Generated ", cFilename
 
@@ -187,7 +311,6 @@ func main() {
 """
   writeFile(projectDir / "src" / "main.mg", mainContent)
 
-  # Create Makefile
   let makefileContent =
     """# MicroGo Project Makefile
 PROJECT = """ & actualName & "\n" &
@@ -232,24 +355,20 @@ proc main() =
 
   case command
   of "init":
-    if paramCount() >= 2:
-      let projectName = paramStr(2)
-      initProject(projectName)
+    if paramCount() >= 2: initProject(paramStr(2))
     else: initProject()
 
   of "run":
     if paramCount() < 2:
       echo "Usage: microgo run <file.mg>"
       quit(1)
-    let filename = paramStr(2)
-    if not runFile(filename): quit(1)
+    if not runFile(paramStr(2)): quit(1)
 
   of "build":
     if paramCount() < 2:
       echo "Usage: microgo build <file.mg>"
       quit(1)
-    let filename = paramStr(2)
-    if not buildFile(filename): quit(1)
+    if not buildFile(paramStr(2)): quit(1)
 
   of "--help", "-h":
     showUsage()

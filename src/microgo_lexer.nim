@@ -156,12 +156,10 @@ proc scanNumber(source: string, i: var int, line, col: var int): Token =
   let start = i
   var isFloat = false
 
-  # Integer part
   while i < source.len and source[i] in {'0' .. '9'}:
     inc(i)
     inc(col)
 
-  # Decimal point?
   if i < source.len and source[i] == '.' and i + 1 < source.len and source[i + 1] in {'0' .. '9'}:
     isFloat = true
     inc(i)
@@ -170,7 +168,6 @@ proc scanNumber(source: string, i: var int, line, col: var int): Token =
       inc(i)
       inc(col)
 
-  # Optional exponent
   if i < source.len and source[i] in {'e', 'E'}:
     isFloat = true
     inc(i)
@@ -184,11 +181,10 @@ proc scanNumber(source: string, i: var int, line, col: var int): Token =
 
   let
     lexeme = source[start ..< i]
-    numVal = parseFloat(lexeme)
     tokenCol = col - lexeme.len
     kind = if isFloat: tkFloatLit else: tkIntLit
 
-  createToken(kind, lexeme, line, tokenCol, true, "", numVal)
+  createToken(kind, lexeme, line, tokenCol, true, "", parseFloat(lexeme))
 
 proc scanString(source: string, i: var int, line, col: var int): Token =
   let
@@ -275,12 +271,11 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
     startLine = line
     startCol = col
 
-  inc(i)  # Skip '@'
+  inc(i) 
   inc(col)
-  inc(i)  # Skip 'c'
+  inc(i) 
   inc(col)
   
-  # Skip whitespace
   while i < source.len and source[i] in {' ', '\t', '\n', '\r'}:
     if source[i] == '\n':
       inc(line)
@@ -292,12 +287,12 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
   if i >= source.len or source[i] != '{':
     return createToken(tkError, "Expected '{' after @c", line, col)
 
-  inc(i)  # Skip '{'
+  inc(i)
   inc(col)
   
   var
-    cCode = ""
-    braceCount = 1  # Start at 1 because we already consumed the opening '{'
+    cCode      = ""
+    braceCount = 1  
 
   while i < source.len and braceCount > 0:
     if source[i] == '{':
@@ -305,10 +300,8 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
       cCode.add(source[i])
     elif source[i] == '}':
       dec(braceCount)
-      if braceCount > 0:  # Don't add the final '}'
-        cCode.add(source[i])
-    else:
-      cCode.add(source[i])
+      if braceCount > 0: cCode.add(source[i])
+    else: cCode.add(source[i])
 
     inc(i)
     inc(col)
@@ -319,9 +312,9 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
 proc lex*(source: string): seq[Token] =
   var
     tokens: seq[Token]
-    i = 0
+    i    = 0
     line = 1
-    col = 1
+    col  = 1
 
   while i < source.len:
     let ch = source[i]
@@ -485,8 +478,12 @@ proc lex*(source: string): seq[Token] =
 # =========================== UTILITIES ============================
 proc `$`*(token: Token): string =
   case token.kind
-  of tkStringLit: "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ", \"" & token.strVal & "\")"
-  of tkIntLit, tkFloatLit: "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ", " & $token.numVal & ")"
+  of tkStringLit: "Token(" & $token.kind & ", line " & $token.line & ":" & 
+    $token.col & ", \"" & token.strVal & "\")"
+
+  of tkIntLit, tkFloatLit: "Token(" & $token.kind & ", line " & $token.line & 
+    ":" & $token.col & ", " & $token.numVal & ")"
   else:
-    if token.lexeme.len > 0: "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ", '" & token.lexeme & "')"
+    if token.lexeme.len > 0: "Token(" & $token.kind & ", line " & $token.line & 
+      ":" & $token.col & ", '" & token.lexeme & "')"
     else: "Token(" & $token.kind & ", line " & $token.line & ":" & $token.col & ")"

@@ -113,6 +113,7 @@ const Keywords = {
   "defer":    tkDefer,
   "alloc":    tkAlloc,
   "in":       tkIn,
+  "NULL":     tkNil,
 }.toTable
 
 # =========================== HELPER FUNCTIONS ============================
@@ -274,27 +275,29 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
     startLine = line
     startCol = col
 
-  inc(i)
+  inc(i)  # Skip '@'
   inc(col)
-  inc(i)
+  inc(i)  # Skip 'c'
   inc(col)
-
+  
+  # Skip whitespace
   while i < source.len and source[i] in {' ', '\t', '\n', '\r'}:
     if source[i] == '\n':
       inc(line)
       col = 1
-    else: inc(col)
+    else:
+      inc(col)
     inc(i)
 
   if i >= source.len or source[i] != '{':
     return createToken(tkError, "Expected '{' after @c", line, col)
 
-  inc(i)
+  inc(i)  # Skip '{'
   inc(col)
-
+  
   var
     cCode = ""
-    braceCount = 1
+    braceCount = 1  # Start at 1 because we already consumed the opening '{'
 
   while i < source.len and braceCount > 0:
     if source[i] == '{':
@@ -302,9 +305,10 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
       cCode.add(source[i])
     elif source[i] == '}':
       dec(braceCount)
-      if braceCount > 0:
+      if braceCount > 0:  # Don't add the final '}'
         cCode.add(source[i])
-    else: cCode.add(source[i])
+    else:
+      cCode.add(source[i])
 
     inc(i)
     inc(col)

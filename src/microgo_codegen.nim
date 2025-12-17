@@ -29,7 +29,7 @@ proc escapeString(str: string): string =
 
 # =========================== FORWARD DECLARATIONS ============================
 proc generateForRange(node: Node, context: CodegenContext): string
-proc generateCall(node: Node, context: CodegenContext): string
+proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): string 
 proc generateExpression(node: Node): string
 proc generateBlock(node: Node, context: CodegenContext): string
 proc generateFieldAccess(node: Node): string
@@ -200,10 +200,10 @@ proc inferTypeFromExpression(node: Node): string =
   case node.kind
   of nkLiteral:
     let val = node.literalValue
-    if val.len >= 2 and val[0] == '\'' and val[^1] == '\'': return "char"
-    if val.contains('.') or val.contains('e') or val.contains('E'): return "double"
+    if val == "NULL": return "void*"  # CHANGED from "char*" to "void*"
+    if val.contains('.') or val.contains('e') or val.contains('E'): 
+      return "double"
     else:
-      if val == "NULL": return "void*"
       if val == "true" or val == "false": return "bool"
       return "int"
   
@@ -236,6 +236,36 @@ proc inferTypeFromExpression(node: Node): string =
 
 # =========================== VARIABLE DECLARATION ============================
 proc generateVarDecl(node: Node, context: CodegenContext): string =
+  # Check for comma in varName (multiple returns)
+  if ',' in node.varName:
+    let names = node.varName.split(',')
+    let firstName = names[0].strip()
+    let secondName = names[1].strip()
+    
+    var code = ""
+    
+    if node.varValue != nil and node.varValue.kind == nkCall:
+      let funcCall = node.varValue
+      
+      # Check if we have special type format "int,char*"
+      if ',' in node.varType:
+        let types = node.varType.split(',')
+        let firstType = types[0].strip()  # e.g., "int"
+        let secondType = types[1].strip() # e.g., "char*"
+        
+        # Initialize error variable with correct type
+        code = secondType & " " & secondName & " = NULL;\n"
+        code &= firstType & " " & firstName & " = " & 
+               generateCall(funcCall, cgExpression, secondName) & ";\n"
+        
+        return indentLine(code, context)
+      else:
+        # Fallback to old logic
+        code = "char* " & secondName & " = NULL;\n"
+        code &= "int " & firstName & " = " & 
+               generateCall(funcCall, cgExpression, secondName) & ";\n"
+        return indentLine(code, context)
+  
   var
     typeName = node.varType
     isArray = false
@@ -315,22 +345,22 @@ proc generateConstDecl(node: Node, context: CodegenContext): string =
   else: return "#define " & node.constName & " " & constExpr & "\n"
 
 # ============================ CALL GENERATORS ============================
-proc generateCall(node: Node, context: CodegenContext): string =
+proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): string =
   let funcName = node.callFunc
   var callCode = ""
-
+  
   case funcName
   of "alloc":
     if node.callArgs.len == 2:
       let
         typeArg    = node.callArgs[0]
         countArg   = node.callArgs[1]
-
+      
       var typeName = "int" 
       if typeArg.kind == nkIdentifier: typeName = typeArg.identName
       callCode = "malloc(" & generateExpression(countArg) & " * sizeof(" & typeName & "))"
     else: callCode = "malloc(0)"
-
+  
   of "len":
     if node.callArgs.len == 1:
       let arg = generateExpression(node.callArgs[0])
@@ -352,7 +382,6 @@ proc generateCall(node: Node, context: CodegenContext): string =
     if node.callArgs.len == 0: callCode &= "\"\\n\""
     else:
       let firstArg = node.callArgs[0]
-
       case firstArg.kind
       of nkStringLit:
         callCode &= generateExpression(firstArg)
@@ -367,18 +396,26 @@ proc generateCall(node: Node, context: CodegenContext): string =
       of nkIdentifier: callCode &= "\"%d\", " & generateExpression(firstArg)
       else: callCode &= "\"%d\", " & generateExpression(firstArg)
     callCode &= ")"
+  
   else:
     callCode = funcName & "("
     if node.callArgs.len > 0:
       for i, arg in node.callArgs:
         if i > 0: callCode &= ", "
         callCode &= generateExpression(arg)
+    
+    # Add error parameter if provided
+    if errorVar.len > 0:
+      if node.callArgs.len > 0: callCode &= ", "
+      callCode &= "&" & errorVar
+    
     callCode &= ")"
-
+  
   if context != cgExpression:
     callCode &= ";\n"
     return indentLine(callCode, context)
-  else: return callCode
+  else:
+    return callCode
 
 # =========================== ASSIGNMENT GENERATORS ===========================
 proc generateAssignment(node: Node, context: CodegenContext): string =
@@ -393,14 +430,31 @@ proc generateAssignment(node: Node, context: CodegenContext): string =
 
 # ============================ RETURN GENERATORS =============================
 proc generateReturn(node: Node, context: CodegenContext): string =
-  var   code = ""
-  if    node.callArgs.len == 0: code = "return"
-  elif  node.callArgs.len == 1:
+  var code = ""
+  
+  case node.callArgs.len
+  of 0:
+    code = "return;"
+  of 1:
     let retVal = generateExpression(node.callArgs[0])
-    code = "return " & retVal
-  else: discard
-
-  code &= ";\n"
+    code = "return " & retVal & ";"
+  of 2:
+    # return value, error;
+    let retVal = generateExpression(node.callArgs[0])
+    let errExpr = generateExpression(node.callArgs[1])
+    
+    if errExpr == "NULL" or errExpr == "nil" or errExpr == "0":
+      # No error
+      code = "*error_out = NULL;\n"
+      code &= "  return " & retVal & ";"
+    else:
+      # Has error - errExpr should be a string literal
+      # For string literals like "negative value"
+      code = "*error_out = " & errExpr & ";\n"
+      code &= "  return " & retVal & ";"
+  else:
+    code = "return /* too many values */;"
+  
   return indentLine(code, context)
 
 # ============================ ARRAY TYPE GENERATORS ==========================
@@ -471,6 +525,7 @@ proc generateFieldAccess(node: Node): string =
   resultField &= "." & node.field.identName
   return resultField
 
+
 # ============================== GENERATE BLOCK ================================
 proc generateBlock(node: Node, context: CodegenContext): string =
   if node == nil: return ""
@@ -511,19 +566,33 @@ proc generateBlock(node: Node, context: CodegenContext): string =
 # =========================== STRUCTURE GENERATORS ============================
 proc generateFunction(node: Node): string =
   var code = ""
-
-  if node.funcName == "main": code = "int main() {\n"
+  
+  if node.funcName == "main":
+    code = "int main() {\n"
   else:
+    # Build function signature with error parameter if needed
     code = node.returnType & " " & node.funcName & "("
+    
+    # Parameters
     if node.params.len > 0:
       for i, param in node.params:
         if i > 0: code &= ", "
         code &= param.varType & " " & param.varName
-    else: code &= "void"
+    
+    # ADD ERROR PARAMETER IF FUNCTION RETURNS ERROR
+    if node.returnsError:
+      if node.params.len > 0: code &= ", "
+      code &= "char** error_out"
+    elif node.params.len == 0:
+      code &= "void"
+    
     code &= ") {\n"
-
-  if node.returnsError: code &= "  *error_out = NULL;\n"
-
+  
+  # Initialize error_out if needed
+  if node.returnsError:
+    code &= "  *error_out = NULL;\n"
+  
+  # Rest of function body...
   var
     deferStack: seq[string] = @[]
     hasExplicitReturn = false
@@ -531,27 +600,23 @@ proc generateFunction(node: Node): string =
   if node.body != nil:
     for stmt in node.body.statements:
       if stmt.kind == nkDefer:
-        let deferCode = generateCall(stmt.deferExpr, cgExpression) & ";\n"
+        let deferCode = generateCall(stmt.deferExpr, cgExpression, "") & ";\n"
         deferStack.add("  " & deferCode)
       elif stmt.kind == nkReturn:
         hasExplicitReturn = true
-
+        
         var returnCode = ""
         if deferStack.len > 0:
           returnCode &= "\n  // Execute deferred statements\n"
           for i in countdown(deferStack.len - 1, 0):
             returnCode &= deferStack[i]
 
-        if stmt.callArgs.len   == 0: returnCode &= "  return;\n"
-        elif stmt.callArgs.len == 1:
-          let retVal = generateExpression(stmt.callArgs[0])
-          returnCode &= "  return " & retVal & ";\n"
-        else: returnCode &= "  return;\n"
+        returnCode &= generateReturn(stmt, cgFunction)
         code &= returnCode
       else:
         case stmt.kind
         of nkAssignment:    code &= generateAssignment(stmt, cgFunction)
-        of nkCall:          code &= generateCall(stmt, cgFunction)
+        of nkCall:          code &= generateCall(stmt, cgFunction, "")
         of nkVarDecl:       code &= generateVarDecl(stmt, cgFunction)
         of nkCBlock:        code &= generateCBlock(stmt, cgFunction)
         of nkConstDecl:     code &= generateConstDecl(stmt, cgFunction)
@@ -560,7 +625,7 @@ proc generateFunction(node: Node): string =
         of nkForRange:      code &= generateForRange(stmt, cgFunction)
         of nkSwitch:        code &= generateSwitch(stmt, cgFunction)
         else: discard
-
+  
   if not hasExplicitReturn:
     if deferStack.len > 0:
       code &= "\n  // Deferred statements\n"
@@ -571,7 +636,7 @@ proc generateFunction(node: Node): string =
     elif node.returnType != "void":
       code &= "  // WARNING: Missing return value\n"
       code &= "  return 0;\n"
-
+  
   code &= "}\n"
   return code
 
@@ -645,11 +710,14 @@ proc generateProgram(node: Node): string =
       if    "int main()" in cCode: hasCMain = true
 
     of nkFunction:
+      echo "DEBUG generateProgram: Found function ", funcNode.funcName, 
+           " returnsError=", funcNode.returnsError
       functionCode &= generateFunction(funcNode)
       if funcNode.funcName == "main": hasMicroGoMain = true
     
     of nkVarDecl: otherTopLevel &= generateVarDecl(funcNode, cgGlobal)
     else: discard
+  
   result = includes & defines & structsCode & otherTopLevel & functionCode
   
   if not hasCMain and not hasMicroGoMain:

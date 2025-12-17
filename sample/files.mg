@@ -4,7 +4,7 @@
 
 func main() {
     // Test various writes
-    var f = fopen("test.txt", "w")
+    var FILE fp* = fopen("test.txt", "w")
     
     // Different fprintf formats
     fprintf(f, "Integer: %d\n", 100)

@@ -1,4 +1,4 @@
-# microgo_lexer.nim 
+# zal_lexer.nim 
 import std/[tables, strutils]
 
 # =========================== TOKEN DEFINITIONS ============================

@@ -1,6 +1,6 @@
-# microgo_parser.nim
+# zal_parser.nim
 import std/[strutils]
-import microgo_lexer
+import zal_lexer
 
 # =========================== AST NODE DEFINITIONS ============================
 type NodeKind* = enum

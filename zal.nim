@@ -1,7 +1,7 @@
-# microgo.nim - Main compiler executable
-import src/microgo_lexer
-import src/microgo_parser
-import src/microgo_codegen
+# zal.nim - Main compiler executable
+import src/zal_lexer
+import src/zal_parser
+import src/zal_codegen
 import std/[os, osproc, strutils]
 
 # Forward declaration
@@ -255,22 +255,22 @@ proc compileFile(filename: string, runImmediately: bool = true): bool =
 # =========================== SHOW USAGE ================================
 proc showUsage() =
   echo """
-MicroGo Compiler
+Zal Compiler
 Usage: 
-  microgo <file.mg>           # Compile and run immediately
-  microgo run <file.mg>       # Same as above
-  microgo build <file.mg>     # Compile to C only
-  microgo init [name]         # Create new project
+  zal <file.zal>           # Compile and run immediately
+  zal run <file.zal>       # Same as above
+  zal build <file.zal>     # Compile to C only
+  zal init [name]         # Create new project
   
 Options:
   -h, --help                  Show this help message
 
 Examples:
-  microgo hello.mg            # Compile and run
-  microgo run hello.mg        # Same as above
-  microgo build hello.mg      # Generate hello.c only
-  microgo init myproject      # Create new project
-  microgo init                # Create 'myproject' folder
+  zal main.zal            # Compile and run
+  zal run main.zal        # Same as above
+  zal build main.zal      # Generate hello.c only
+  zal init myproject      # Create new project
+  zal init                # Create 'myproject' folder
 """
 
 # =========================== RUN FILE ===================================
@@ -306,13 +306,13 @@ proc initProject(projectName: string = "") =
 }
 
 func main() {
-    print("Hello from MicroGo!\n")
+    print("Hello from Zal!\n")
 }
 """
   writeFile(projectDir / "src" / "main.mg", mainContent)
 
   let makefileContent =
-    """# MicroGo Project Makefile
+    """# Zal Project Makefile
 PROJECT = """ & actualName & "\n" &
     """
 SRC_DIR = src
@@ -320,7 +320,7 @@ OUTPUT_DIR = output
 BIN_DIR = bin
 
 # Compiler
-MGC = microgo
+MGC = zal
 
 # Build rules
 all: build run
@@ -330,7 +330,7 @@ build: $(OUTPUT_DIR)/main.c
 	gcc -O2 $(OUTPUT_DIR)/main.c -o $(BIN_DIR)/$(PROJECT)
 
 $(OUTPUT_DIR)/main.c: $(SRC_DIR)/main.mg
-	@echo "Compiling MicroGo to C..."
+	@echo "Compiling Zal to C..."
 	$(MGC) build $(SRC_DIR)/main.mg
 	@mv src/main.c $(OUTPUT_DIR)/ 2>/dev/null || mv main.c $(OUTPUT_DIR)/
 
@@ -360,13 +360,13 @@ proc main() =
 
   of "run":
     if paramCount() < 2:
-      echo "Usage: microgo run <file.mg>"
+      echo "Usage: zal run <file.mg>"
       quit(1)
     if not runFile(paramStr(2)): quit(1)
 
   of "build":
     if paramCount() < 2:
-      echo "Usage: microgo build <file.mg>"
+      echo "Usage: zal build <file.mg>"
       quit(1)
     if not buildFile(paramStr(2)): quit(1)
 

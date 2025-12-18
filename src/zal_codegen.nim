@@ -1,5 +1,5 @@
-# microgo_codegen.nim - Generate C code from AST
-import microgo_parser
+# zal_codegen.nim - Generate C code from AST
+import zal_parser
 import std/[strutils]
 
 # =========================== CONTEXT TYPES ============================
@@ -714,7 +714,7 @@ proc generateProgram(node: Node): string =
   var
     functionCode =    ""
     hasCMain =        false
-    hasMicroGoMain =  false
+    haZalMain =  false
     includes =        ""
     defines =         ""
     otherTopLevel =   ""
@@ -735,14 +735,14 @@ proc generateProgram(node: Node): string =
 
     of nkFunction:
       functionCode &= generateFunction(funcNode)
-      if funcNode.funcName == "main": hasMicroGoMain = true
+      if funcNode.funcName == "main": haZalMain = true
     
     of nkVarDecl: otherTopLevel &= generateVarDecl(funcNode, cgGlobal)
     else: discard
   
   result = includes & defines & structsCode & otherTopLevel & functionCode
   
-  if not hasCMain and not hasMicroGoMain:
+  if not hasCMain and not haZalMain:
     result &= "\nint main() {\n"
     result &= "  // Auto-generated entry point\n"
     result &= "  return 0;\n"

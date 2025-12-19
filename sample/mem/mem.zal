@@ -10,5 +10,4 @@ func main() {
     print("Value 0: %g\n", weights[0])
     print("Value 1: %g\n", weights[1])
     free(weights)
-    
 }

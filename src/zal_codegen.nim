@@ -382,8 +382,8 @@ proc inferTypeFromExpression(node: Node): string =
 
 # =========================== VARIABLE DECLARATION ============================
 proc generateVarDecl(node: Node, context: CodegenContext): string =
-  if node.varValue != nil:
-    echo "  value kind: ", node.varValue.kind
+  # if node.varValue != nil:
+  #   echo "  value kind: ", node.varValue.kind
   
   var cType = node.varType
   

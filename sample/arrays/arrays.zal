@@ -1,0 +1,3 @@
+func printhello() {
+    print("hello")
+}

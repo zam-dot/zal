@@ -91,7 +91,6 @@ proc filterSelectiveImports(source: string, items: seq[string]): string =
     output = ""
     lines = source.splitLines()
     i = 0
-    inTopLevelCBlock = false
   
   while i < lines.len:
     let 
@@ -102,18 +101,31 @@ proc filterSelectiveImports(source: string, items: seq[string]): string =
       inc(i)
       continue
     
-    if trimmed.startsWith("@c") and "{" in trimmed:
-      if i == 0 or not lines[i-1].endsWith("{"):
-        inTopLevelCBlock = true
-        output &= line & "\n"
-        inc(i)
-        continue
-    
-    if inTopLevelCBlock:
-      output &= line & "\n"
-      if line.contains("}"):
-        inTopLevelCBlock = false
-      inc(i)
+    # SKIP @c blocks during selective imports (we'll handle them separately)
+    if trimmed.startsWith("@c"):
+      # Skip the entire @c block for now
+      var j = i
+      var braceDepth = 0
+      var foundOpening = false
+      
+      while j < lines.len:
+        let currentLine = lines[j]
+        
+        for ch in currentLine:
+          if ch == '{': 
+            braceDepth += 1
+            foundOpening = true
+          elif ch == '}': 
+            braceDepth -= 1
+        
+        if foundOpening and braceDepth == 0:
+          i = j + 1
+          break
+        
+        inc(j)
+        if j == lines.len:
+          i = j
+          break
       continue
     
     var 
@@ -147,12 +159,49 @@ proc filterSelectiveImports(source: string, items: seq[string]): string =
     if itemName.len > 0 and items.contains(itemName): shouldInclude = true
     
     if shouldInclude:
-      var 
-        j = i
-        braceDepth = 0
-        inFunctionOrStruct = false
+      # Look back for a @c block immediately before this item
+      var k = i - 1
       
-      if trimmed.startsWith("func ") or trimmed.startsWith("struct "): inFunctionOrStruct = true
+      while k >= 0:
+        let prevLine = lines[k]
+        let prevTrimmed = prevLine.strip()
+        
+        if prevTrimmed.len > 0:
+          if prevTrimmed.startsWith("@c"):
+            # Found a @c block, include it
+            var cBlockStart = k
+            var cBlockDepth = 0
+            var cFoundOpening = false
+            
+            # Include the entire @c block
+            while cBlockStart < lines.len:
+              output &= lines[cBlockStart] & "\n"
+              
+              for ch in lines[cBlockStart]:
+                if ch == '{': 
+                  cBlockDepth += 1
+                  cFoundOpening = true
+                elif ch == '}': 
+                  cBlockDepth -= 1
+              
+              if cFoundOpening and cBlockDepth == 0:
+                break
+              
+              inc(cBlockStart)
+            break
+          elif not prevTrimmed.startsWith("//") and prevTrimmed.len > 0:
+            # Not a comment or empty line, and not @c block
+            # So no adjacent @c block
+            break
+        dec(k)
+      
+      # Now include the actual item (function, struct, etc.)
+      var j = i
+      var braceDepth = 0
+      var inFunctionOrStruct = false
+      
+      if trimmed.startsWith("func ") or trimmed.startsWith("struct "): 
+        inFunctionOrStruct = true
       
       while j < lines.len:
         let currentLine = lines[j]
@@ -163,7 +212,8 @@ proc filterSelectiveImports(source: string, items: seq[string]): string =
             if ch == '{': braceDepth += 1
             elif ch == '}': braceDepth -= 1
         
-        if inFunctionOrStruct and braceDepth == 0 and j > i: break
+        if inFunctionOrStruct and braceDepth == 0 and j > i: 
+          break
         
         if not inFunctionOrStruct and j > i:
           let nextTrimmed = currentLine.strip()
@@ -176,7 +226,8 @@ proc filterSelectiveImports(source: string, items: seq[string]): string =
         
         inc(j)
       i = j 
-    else: inc(i)
+    else: 
+      inc(i)
   
   return output
 

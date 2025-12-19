@@ -384,9 +384,6 @@ proc parseType(p: Parser): string =
     if not p.expect(tkRBracket):
       return ""
     
-    # Now parse the element type that comes AFTER the ]
-    # This is crucial - we need to parse what comes after [size]
-    
     # Check current token for type
     var elemType = ""
     case p.current.kind
@@ -1260,15 +1257,41 @@ proc parseEnum(p: Parser): Node =
   
   while p.current.kind != tkRBrace and p.current.kind != tkEOF:
     if p.current.kind == tkIdent:
-      # Store the identifier name as a string
-      enumValues.add(p.current.lexeme)
+      # Get the enum value name
+      let valueName = p.current.lexeme
       p.advance()
       
+      # Check for explicit value assignment
+      if p.current.kind == tkAssign:
+        p.advance()
+        # Only support simple integer literals for now
+        if p.current.kind == tkIntLit:
+          let value = p.current.lexeme
+          p.advance()
+          enumValues.add(valueName & " = " & value)
+        elif p.current.kind == tkIdent:
+          # Could be referencing previous enum value
+          let refName = p.current.lexeme
+          p.advance()
+          enumValues.add(valueName & " = " & refName)
+        else:
+          # Unsupported value type
+          return nil
+      else:
+        # No explicit value
+        enumValues.add(valueName)
+      
+      # Optional comma
       if p.current.kind == tkComma:
         p.advance()
-    else:
-      # Skip unexpected tokens
+      
+    elif p.current.kind == tkComma:
+      # Skip stray commas
       p.advance()
+    else:
+      # Skip other tokens (whitespace etc. shouldn't be here as tokens)
+      # But break to avoid infinite loop
+      break
   
   if not p.expectOrError(tkRBrace, "Expected '}' at end of enum"): return nil
   

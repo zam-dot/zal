@@ -39,6 +39,7 @@ proc generateIndexExpr(node: Node): string
 proc generateArrayLiteral(node: Node): string
 proc generateArrayType(node: Node): string
 proc generateSwitch(node: Node, context: CodegenContext): string
+
 # =========================== BASIC EXPRESSION GENERATORS ============================
 proc generateLiteral(node: Node): string =
   case node.kind
@@ -121,53 +122,74 @@ proc generateForRange(node: Node, context: CodegenContext): string =
     isRange = false
     startVal, endVal: string
 
+  # Check if this is a range expression (start..end)
   if node.rangeTarget.kind == nkBinaryExpr and node.rangeTarget.op == "..":
-    isRange   = true
-    startVal  = generateExpression(node.rangeTarget.left)
-    endVal    = generateExpression(node.rangeTarget.right)
+    isRange = true
+    if node.rangeTarget.left != nil:
+      startVal = generateExpression(node.rangeTarget.left)
+    if node.rangeTarget.right != nil:
+      endVal = generateExpression(node.rangeTarget.right)
 
   var code = ""
 
   if isRange:
-    if node.rangeValue != nil: code = "for (int " & node.rangeValue.identName & " = " & startVal & "; " &
-        node.rangeValue.identName & " <= " & endVal & "; " & node.rangeValue.identName & "++) {\n"
-    elif node.rangeIndex != nil: code = "for (int " & node.rangeIndex.identName & " = " & startVal & "; " &
-        node.rangeIndex.identName & " <= " & endVal & "; " & node.rangeIndex.identName & "++) {\n"
-    else: code = "for (int _i = " & startVal & "; _i <= " & endVal & "; _i++) {\n"
-
+    # Handle range loops: for x in start..end
+    if node.rangeValue != nil: 
+      code = "for (int " & node.rangeValue.identName & " = " & startVal & "; " &
+          node.rangeValue.identName & " <= " & endVal & "; " & node.rangeValue.identName & "++) {\n"
+    elif node.rangeIndex != nil: 
+      code = "for (int " & node.rangeIndex.identName & " = " & startVal & "; " &
+          node.rangeIndex.identName & " <= " & endVal & "; " & node.rangeIndex.identName & "++) {\n"
+    else: 
+      code = "for (int _i = " & startVal & "; _i <= " & endVal & "; _i++) {\n"
   else:
-    let target    = generateExpression(node.rangeTarget)
-    var isString  = false
+    # Handle collection loops: for x in collection
+    let target = generateExpression(node.rangeTarget)
+    var isString = false
 
-    if node.rangeTarget.kind == nkStringLit: isString = true
-    elif node.rangeTarget.kind == nkIdentifier:
+    # Check if target is a string
+    case node.rangeTarget.kind
+    of nkStringLit:
+      isString = true
+    of nkIdentifier:
       let name = node.rangeTarget.identName
-      if name == "s" or name == "str" or name == "text" or name.endsWith("Str") or name.endsWith("String"): isString = true
-    elif target.startsWith("\"") or target.contains("char*"): isString = true
+      if name == "s" or name == "str" or name == "text" or name.endsWith("Str") or name.endsWith("String"): 
+        isString = true
+    else:
+      # Check the generated expression
+      if target.startsWith("\"") or target.contains("char*"): 
+        isString = true
 
     if isString:
+      # String iteration
       code = "for (int _i = 0; " & target & "[_i] != '\\0'; _i++) {\n"
-      if node.rangeIndex != nil: code &= "  int " & node.rangeIndex.identName & " = _i;\n"
-      if node.rangeValue != nil: code &= "  char " & node.rangeValue.identName & " = " & target & "[_i];\n"
+      if node.rangeIndex != nil: 
+        code &= "  int " & node.rangeIndex.identName & " = _i;\n"
+      if node.rangeValue != nil: 
+        code &= "  char " & node.rangeValue.identName & " = " & target & "[_i];\n"
     else:
+      # Array iteration
       code = "for (int _i = 0; _i < (int)(sizeof(" & target & ") / sizeof(" & target & "[0])); _i++) {\n"
-
-      if node.rangeIndex != nil: code &= "  int " & node.rangeIndex.identName & " = _i;\n"
+      if node.rangeIndex != nil: 
+        code &= "  int " & node.rangeIndex.identName & " = _i;\n"
       if node.rangeValue != nil:
         var elemType = "int" 
         if node.rangeTarget.kind == nkArrayLit and node.rangeTarget.elements.len > 0:
           let firstElem = node.rangeTarget.elements[0]
-          if firstElem.kind == nkStringLit: elemType = "char*"
+          if firstElem.kind == nkStringLit: 
+            elemType = "char*"
           elif firstElem.kind == nkLiteral:
             if firstElem.literalValue.contains('.') or firstElem.literalValue.contains('e') or
-                firstElem.literalValue.contains('E'): elemType = "double"
-
+                firstElem.literalValue.contains('E'): 
+              elemType = "double"
         code &= "  " & elemType & " " & node.rangeValue.identName & " = " & target & "[_i];\n"
 
+  # Add body code
   if node.rangeBody != nil:
     let bodyCode = generateBlock(node.rangeBody, cgFunction)
     for line in bodyCode.splitLines:
-      if line.len > 0: code &= "  " & line & "\n"
+      if line.len > 0: 
+        code &= "  " & line & "\n"
 
   code &= "}\n"
   return indentLine(code, context)
@@ -176,71 +198,190 @@ proc generateForRange(node: Node, context: CodegenContext): string =
 proc generateCBlock(node: Node, context: CodegenContext): string =
   var cCode = node.cCode.strip(leading = false, trailing = true)
 
+  # Check if this looks like a function definition
   let looksLikeFunction = (" int " in cCode or " void " in cCode or " char " in cCode or " float " in cCode or
                            " double " in cCode) and "(" in cCode and "){" in cCode
 
-  if looksLikeFunction and context != cgGlobal:
-    if context == cgFunction: result = cCode.replace("\n", "\n  ")
-  else: result = cCode
-  if result.len > 0 and result[^1] != '\n': result &= "\n"
+  if looksLikeFunction:
+    # Function-like C block
+    if context == cgFunction:
+      # Inside a function body - indent it
+      result = cCode.replace("\n", "\n  ")
+    else:
+      # At global scope or in expression - no indentation
+      result = cCode
+  else:
+    # Not a function - just use as-is
+    result = cCode
+  
+  # Ensure it ends with newline
+  if result.len > 0 and result[^1] != '\n': 
+    result &= "\n"
+
+# =========================== TYPE INFERENCE ============================
+proc inferTypeFromIdentifier(name: string): string =
+  # Try to infer type from identifier name patterns
+  
+  # Check for pointer patterns first
+  if name.endsWith("Ptr"):
+    let baseName = name[0..^4]  # Remove "Ptr"
+    let baseType = inferTypeFromIdentifier(baseName)
+    return baseType & "*"
+  
+  elif name.endsWith("_ptr"):
+    let baseName = name[0..^5]  # Remove "_ptr"
+    let baseType = inferTypeFromIdentifier(baseName)
+    return baseType & "*"
+  
+  elif name.startsWith("p_"):
+    let baseName = name[2..^1]  # Remove "p_"
+    let baseType = inferTypeFromIdentifier(baseName)
+    return baseType & "*"
+  
+  # Check for string patterns
+  elif name.endsWith("Str") or name.endsWith("String") or name.endsWith("_str"):
+    return "char*"
+  
+  # Check for size/count patterns
+  elif name.endsWith("Count") or name.endsWith("Size") or name.endsWith("Len"):
+    return "size_t"
+  
+  # Check for boolean patterns
+  elif name.endsWith("Flag") or name.endsWith("Enabled") or name.startsWith("is"):
+    return "bool"
+  
+  # Check for float patterns
+  elif name.endsWith("F") or name.endsWith("_f") or name.contains("Float"):
+    return "double"
+  
+  # Common variable names that suggest types
+  elif name == "str" or name == "text" or name == "message" or 
+       name == "path" or name == "filename" or name == "url":
+    return "char*"
+  
+  elif name == "count" or name == "length" or name == "size" or 
+       name == "index" or name == "i" or name == "j" or name == "k":
+    return "int"
+  
+  elif name == "flag" or name == "enabled" or name == "visible" or 
+       name == "active" or name == "ready":
+    return "bool"
+  
+  else:
+    # Default to int for unknown identifiers
+    return "int"
 
 # =========================== TYPE INFERENCE ============================
 proc inferTypeFromExpression(node: Node): string =
-  if node == nil: return "int"
+  if node == nil: 
+    return "int"
 
   case node.kind
   of nkAddressOf:
-    let targetType = inferTypeFromExpression(node.operand)  # Changed from .target
+    let targetType = inferTypeFromExpression(node.operand)
     return targetType & "*"
+  
   of nkDeref:
-    let ptrType = inferTypeFromExpression(node.operand)  # Changed from .target
+    let ptrType = inferTypeFromExpression(node.operand)
     # Remove one level of pointer
     if ptrType.endsWith("*"):
-      return ptrType[0..^2]
+      return ptrType[0..^2].strip()
     else:
       return ptrType
-  # ... rest of the cases remain the same ...
+  
   of nkLiteral:
     let val = node.literalValue
-    if val == "NULL": return "void*" 
-    if val.contains('.') or val.contains('e') or val.contains('E'): return "double"
+    if val == "NULL": 
+      return "void*" 
+    if val.contains('.') or val.contains('e') or val.contains('E'): 
+      return "double"
     else:
-      if val == "true" or val == "false": return "bool"
+      if val == "true" or val == "false": 
+        return "bool"
       return "int"
   
-  of nkStructLiteral: return node.structType
-  of nkStringLit:     return "char*"
-  of nkIdentifier:    return "int"
+  of nkStructLiteral: 
+    return node.structType
+  
+  of nkStringLit:     
+    return "char*"
+  
+  of nkIdentifier:
+    return inferTypeFromIdentifier(node.identName)
+  
   of nkCall:
     let funcName = node.callFunc
     case funcName
     of "alloc":
       if node.callArgs.len >= 1:
         let typeArg = node.callArgs[0]
-        if typeArg.kind == nkIdentifier: return typeArg.identName & "*"
+        if typeArg.kind == nkIdentifier: 
+          return typeArg.identName & "*"
       return "void*"
+    
+    of "getmem":
+      return "void*"
+    
+    of "len":
+      return "size_t"
+    
+    of "sizeof":
+      return "size_t"
+    
+    else:
+      # For other function calls, we don't know the return type
+      return "int"
 
   of nkArrayLit:
     if node.elements.len > 0:
       return inferTypeFromExpression(node.elements[0])
-    else: return "int"
+    else: 
+      return "int"
 
   of nkBinaryExpr:
     let 
       leftType = inferTypeFromExpression(node.left)
       rightType = inferTypeFromExpression(node.right)
 
-    if leftType   == "double" or rightType == "double": return "double"
-    elif leftType == "char*" or rightType == "char*": return "char*"
-    else: return "int"
-  else: return "int"
+    # Type promotion rules
+    if leftType == "double" or rightType == "double": 
+      return "double"
+    elif leftType == "float" or rightType == "float": 
+      return "float"
+    elif leftType == "char*" or rightType == "char*": 
+      # String concatenation or comparison
+      if node.op in ["+", "==", "!=", "<", ">", "<=", ">="]:
+        return "char*"
+      else:
+        return "int"
+    elif leftType == "bool" or rightType == "bool":
+      # Boolean operations
+      if node.op in ["&&", "||", "==", "!="]:
+        return "bool"
+      else:
+        return "int"
+    else: 
+      return "int"
+  
+  of nkFieldAccess:
+    # For field access, we need to know the struct type
+    return "int"
+  
+  of nkIndexExpr:
+    # Array indexing returns the element type
+    let arrayType = inferTypeFromExpression(node.left)
+    # If it's a pointer type, remove one * to get element type
+    if arrayType.endsWith("*"):
+      return arrayType[0..^2].strip()
+    else:
+      # Assume it's an array of ints
+      return "int"
+  
+  else: 
+    return "int"
 
 # =========================== VARIABLE DECLARATION ============================
 proc generateVarDecl(node: Node, context: CodegenContext): string =
-  echo "DEBUG generateVarDecl:"
-  echo "  varName: ", node.varName
-  echo "  varType: ", node.varType
-  echo "  hasValue: ", node.varValue != nil
   if node.varValue != nil:
     echo "  value kind: ", node.varValue.kind
   
@@ -254,10 +395,6 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
         sizePart = cType[1..<closeBracket]  # Should be "3"
         elemType = cType[closeBracket+1..^1]  # Should be "int"
       
-      echo "  DEBUG array type:"
-      echo "    sizePart: '", sizePart, "'"
-      echo "    elemType: '", elemType, "'"
-      
       var code = ""
       if node.varValue != nil and node.varValue.kind == nkArrayLit:
         # With initializer: [3]int = [1,2,3] -> int arr[3] = {1,2,3}
@@ -266,7 +403,6 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
         # Without initializer
         code = elemType & " " & node.varName & "[" & sizePart & "]"
       
-      echo "  DEBUG generated code: ", code
       code &= ";\n"
       return indentLine(code, context)
   
@@ -384,8 +520,8 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
 # =========================== ENUM GENERATORS ============================
 proc generateEnum(node: Node): string =
   var code = "typedef enum {\n"
-  for i, value in node.enumValues:
-    code &= "    " & value
+  for i, valueStr in node.enumValues:
+    code &= "    " & valueStr
     if i < node.enumValues.len - 1:
       code &= ","
     code &= "\n"

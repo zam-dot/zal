@@ -109,7 +109,6 @@ const Keywords = {
   "switch":   tkSwitch,
   "case":     tkCase,
   "default":  tkDefault,
-  "error":    tkError,
   "nil":      tkNil,
   "len":      tkLen,
   "defer":    tkDefer,
@@ -274,9 +273,9 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
     startLine = line
     startCol = col
 
-  inc(i) 
+  inc(i)  # Skip @
   inc(col)
-  inc(i) 
+  inc(i)  # Skip c
   inc(col)
   
   while i < source.len and source[i] in {' ', '\t', '\n', '\r'}:
@@ -298,16 +297,19 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
     braceCount = 1  
 
   while i < source.len and braceCount > 0:
+    cCode.add(source[i])  # Add character first
+    
     if source[i] == '{':
       inc(braceCount)
-      cCode.add(source[i])
     elif source[i] == '}':
       dec(braceCount)
-      if braceCount > 0: cCode.add(source[i])
-    else: cCode.add(source[i])
-
+    
     inc(i)
     inc(col)
+
+  # Remove the last '}' from cCode if we've already counted it
+  if cCode.len > 0 and cCode[^1] == '}' and braceCount == 0:
+    cCode = cCode[0..^2]
 
   createToken(tkCBlock, cCode, startLine, startCol)
 

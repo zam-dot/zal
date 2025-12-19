@@ -1,3 +1,4 @@
+@include "arrays.zal" {printhello}
 @c {
     #include <stdio.h>
     #include <stdlib.h>
@@ -10,4 +11,5 @@ func main() {
     for i in 0..(len(arr) - 1) {
            print("Value %d \n",arr[i])
     }
+    printhello()
 }

@@ -85,18 +85,20 @@ static inline void rc_release(void *ptr) {
 }
 
 
-int main() {
-    int i = 5;
-    switch (i) {
-        case 0:
-            // fallthrough
-        case 2:
-            // fallthrough
-        case 4:
-            // fallthrough
-        case 5:  printf("7 is even\n"); break;
-        case 1:  printf("7 is odd\n"); break;
-        default: printf("shit\n"); break;
+void printhello(void) { printf("hello"); }
+int  main() {
+    int *arr = rc_new_array(int, 5);
+    arr[0] = 1;
+    arr[1] = 2;
+    arr[2] = 33;
+    arr[3] = 4;
+    arr[4] = 5;
+    for (int i = 0; i <= (len(arr) - 1); i++) {
+        printf("Value %d \n", arr[i]);
     }
+    printhello();
+
+    // Block scope cleanup
+    if (arr) rc_release(arr);
     return 0;
 }

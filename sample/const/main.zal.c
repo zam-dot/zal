@@ -1,4 +1,5 @@
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,18 +86,13 @@ static inline void rc_release(void *ptr) {
 }
 
 
+#define S_CONST "contant"
 int main() {
-    int i = 5;
-    switch (i) {
-        case 0:
-            // fallthrough
-        case 2:
-            // fallthrough
-        case 4:
-            // fallthrough
-        case 5:  printf("7 is even\n"); break;
-        case 1:  printf("7 is odd\n"); break;
-        default: printf("shit\n"); break;
-    }
+    printf("%s\n", S_CONST);
+    int n = 500000000;
+    printf("%d\n", n);
+    double d = 3e20 / n;
+    printf("%lf\n", d);
+    printf("%f\n", sin(d));
     return 0;
 }

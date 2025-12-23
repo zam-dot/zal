@@ -1,6 +1,7 @@
 @c {
     #include <stdio.h>
     #include <math.h>
+    #include <stdlib.h>
 }
 
 const S_CONST = "contant"
@@ -8,12 +9,12 @@ const S_CONST = "contant"
 func main() {
     print("%s\n", S_CONST)
 
-    const n = 500000000
+    var n: int = 500000000
 
     print("%d\n", n)
 
-    const d: float = 3e20 / n  // not parsing after /
-    print("%g\n", d)
+    var d: double = 3e20 / n  // not parsing after /
+    print("%lf\n", d)
 
     print("%f\n", sin(d))    
 }

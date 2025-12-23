@@ -1,0 +1,12 @@
+@c {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+}
+
+func main() {
+    s := "test"
+    a := [1, 2, 3]
+    sa := ["x", "y"]
+    print("Testing...\n")
+}

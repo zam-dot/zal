@@ -86,17 +86,6 @@ static inline void rc_release(void *ptr) {
 
 
 int main() {
-    int i = 5;
-    switch (i) {
-        case 0:
-            // fallthrough
-        case 2:
-            // fallthrough
-        case 4:
-            // fallthrough
-        case 5:  printf("7 is even\n"); break;
-        case 1:  printf("7 is odd\n"); break;
-        default: printf("shit\n"); break;
-    }
+    printf("Hello\n");
     return 0;
 }

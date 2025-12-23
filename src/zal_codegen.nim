@@ -1,12 +1,108 @@
 # zal_codegen.nim - Generate C code from AST
 import zal_parser
-import std/[strutils]
+import std/[strutils, tables]
 
 # =========================== CONTEXT TYPES ============================
 type CodegenContext* = enum
   cgGlobal # Top-level (functions, global variables)
   cgFunction # Inside a function body
   cgExpression # Inside an expression
+
+# =========================== REFERENCE COUNTING IMPLEMENTATION ============================
+const RC_HEADER {.used.} = r"""
+#include <string.h>
+#include <stdbool.h>
+#include <stdlib.h>
+
+typedef struct {
+    size_t refcount;
+    size_t weak_count;
+    size_t array_count; // <--- The missing link
+} RCHeader;
+
+#define RC_HEADER_SIZE sizeof(RCHeader)
+#define RC_GET_HEADER(ptr) ((RCHeader*)((char*)(ptr) - RC_HEADER_SIZE))
+#define ZAL_RELEASE(ptr) do { rc_release(ptr); ptr = NULL; } while(0)
+
+// Increments the weak reference count
+static inline void rc_weak_retain(void *ptr) {
+    if (ptr) {
+        RCHeader *header = RC_GET_HEADER(ptr);
+        header->weak_count++;
+    }
+}
+
+static inline void* rc_alloc(size_t size) {
+    RCHeader* header = (RCHeader*)malloc(RC_HEADER_SIZE + size);
+    if (header) {
+        header->refcount = 1;
+        header->weak_count = 0;
+        header->array_count = 0; // Default
+    }
+    return header ? (char*)header + RC_HEADER_SIZE : NULL;
+}
+
+static inline void* rc_alloc_array(size_t elem_size, size_t count) {
+    RCHeader* header = (RCHeader*)malloc(RC_HEADER_SIZE + (elem_size * count));
+    if (header) {
+        header->refcount = 1;
+        header->weak_count = 0;
+        header->array_count = count; // <--- Store it here!
+        memset((char*)header + RC_HEADER_SIZE, 0, elem_size * count);
+    }
+    return header ? (char*)header + RC_HEADER_SIZE : NULL;
+}
+
+// Strong release: Kills the object data, but keeps header if weak pointers exist
+static inline void rc_release(void *ptr) {
+    if (!ptr) return;
+    RCHeader *header = RC_GET_HEADER(ptr);
+
+    if (--header->refcount == 0) {
+        // Here you would normally call a destructor for the object's contents
+        // if this was a complex struct rather than just a string.
+        
+        if (header->weak_count == 0) {
+            free(header);
+        }
+        // If weak_count > 0, we leave the header allocated so weak pointers 
+        // can still check (refcount == 0) to know the object is dead.
+    }
+}
+
+
+#define rc_new_array(type, count) (type*)rc_alloc_array(sizeof(type), count)
+#define rc_string_new(str) ({ \
+    const char* _s = (str); \
+    size_t _len = _s ? strlen(_s) : 0; \
+    char* _d = (char*)rc_alloc(_len + 1); \
+    if (_d) { strcpy(_d, _s); } \
+    _d; \
+})
+
+static inline void rc_retain(void* ptr) {
+    if (ptr) {
+        RCHeader* header = RC_GET_HEADER(ptr);
+        header->refcount++; // [cite: 6]
+    }
+}
+
+// Weak release: The "Cleanup Crew"
+static inline void rc_weak_release(void *ptr) {
+    if (!ptr) return;
+    RCHeader *header = RC_GET_HEADER(ptr);
+
+    if (--header->weak_count == 0) {
+        // If the object is already dead and this was the last weak reference,
+        // the header is finally no longer needed.
+        if (header->refcount == 0) {
+            free(header);
+        }
+    }
+}
+"""
+
+var rcVariables = initTable[string, bool]()
 
 # =========================== HELPER FUNCTIONS ============================
 proc indentLine(code: string, context: CodegenContext): string =
@@ -27,10 +123,11 @@ proc escapeString(str: string): string =
     else:    result &= ch
 
 # =========================== FORWARD DECLARATIONS ============================
-proc generateForRange(node: Node, context: CodegenContext): string
-proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): string 
 proc generateExpression(node: Node): string
 proc generateBlock(node: Node, context: CodegenContext): string
+proc generateSwitch(node: Node, context: CodegenContext): string
+proc generateForRange(node: Node, context: CodegenContext): string
+proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): string 
 proc generateFieldAccess(node: Node): string
 proc generateAddressOf(node: Node): string
 proc generateDeref(node: Node): string
@@ -38,7 +135,189 @@ proc generateStructLiteral(node: Node): string
 proc generateIndexExpr(node: Node): string
 proc generateArrayLiteral(node: Node): string
 proc generateArrayType(node: Node): string
-proc generateSwitch(node: Node, context: CodegenContext): string
+proc getCleanupString(vars: seq[tuple[name: string, typeName: string, isArray: bool]]): string
+# Reference counting forward declarations:
+proc generateRcNew(node: Node, context: CodegenContext): string
+proc generateRcRetain(node: Node, context: CodegenContext): string
+proc generateRcRelease(node: Node, context: CodegenContext): string
+proc generateWeakRef(node: Node, context: CodegenContext): string
+proc generateStrongRef(node: Node, context: CodegenContext): string
+proc generateRcInit(node: Node, context: CodegenContext): string
+
+# =========================== REFERENCE COUNTING HELPER FUNCTIONS ============================
+proc generateRcRetainStmt(varName: string): string = 
+  "rc_retain(" & varName & ");\n"
+
+proc generateRcReleaseStmt(varName: string): string = 
+  "rc_release(" & varName & ");\n"
+
+proc isRcVariable(varName: string): bool =
+  rcVariables.hasKey(varName)
+
+# =========================== REFERENCE COUNTING GENERATORS (for AST nodes) ============================
+proc generateRcRetain(node: Node, context: CodegenContext): string =
+  let target = generateExpression(node.rcTarget)
+  var code = "rc_retain(" & target & ")"
+  
+  if context != cgExpression:
+    code &= ";\n"
+    return indentLine(code, context)
+  else: return code
+
+# =========================== REFERENCE COUNTING GENERATORS (for AST nodes) ============================
+proc generateRcRelease(node: Node, context: CodegenContext): string =
+  let target = generateExpression(node.rcTarget)
+  var code = "rc_release(" & target & ")"
+  
+  if context != cgExpression:
+    code &= ";\n"
+    return indentLine(code, context)
+  else: return code
+
+# =========================== ARRAY TYPE DETECTION ============================
+proc isArrayType(typeName: string): (bool, string, string) =
+  if typeName.contains("[") and typeName.contains("]"):
+    let bracketPos = typeName.find('[')
+    let closeBracket = typeName.find(']')
+    if closeBracket > bracketPos:
+      let elemType = typeName[0..<bracketPos]
+      let size = typeName[bracketPos+1..<closeBracket]
+      return (true, elemType, size)
+  
+  if typeName.endsWith("*"):
+  # Specific exclusion: char* is a string, not a "generic array" 
+    # that needs rc_release_array depth.
+    if typeName == "char*": 
+      return (false, "", "")
+      
+    let baseType = typeName[0..^2].strip()
+    if " " notin baseType: return (true, baseType, "")
+    
+  return (false, "", "")
+
+proc generateWeakRef(node: Node, context: CodegenContext): string =
+  let target = generateExpression(node.refTarget)
+  var code = "rc_weak(" & target & ")"
+  
+  if context != cgExpression:
+    code &= ";\n"
+    return indentLine(code, context)
+  else: return code
+
+proc generateStrongRef(node: Node, context: CodegenContext): string =
+  let target = generateExpression(node.refTarget)
+  var code = "rc_weak_to_strong(" & target & ")"
+  
+  if context != cgExpression:
+    code &= ";\n"
+    return indentLine(code, context)
+  else: return code
+
+# =========================== REFERENCE COUNTING HELPERS ============================
+proc isReferenceCountedType(typeName: string): bool =
+  if typeName.len == 0: 
+    return false
+  
+  let (isArray, _, _) = isArrayType(typeName)
+  if isArray: return true
+  
+  if typeName.endsWith("*"):
+    if typeName == "char*": return true
+    let baseType = typeName[0..^2].strip()
+    return isReferenceCountedType(baseType)
+  
+  # FIX: Don't treat struct types as RC-managed by default
+  case typeName
+  of "string", "String": return true
+  else:
+    # Only return true for known RC types
+    # For now, return false for all struct types
+    return false
+
+# =========================== REFERENCE COUNTING GENERATORS ============================
+proc generateRcNew(node: Node, context: CodegenContext): string =
+  var 
+    code = ""
+    typeName = node.rcType
+
+  if typeName == "string":
+    typeName = "char*"
+
+  let (isArray, elemType, size) = isArrayType(typeName)
+  if isArray:
+    code = "rc_new_array(" & elemType & ", " & size & ")"
+    
+    if node.rcArgs.len > 0:
+      code &= ";\n"
+      code &= "for (int i = 0; i < " & size & "; i++) {\n"
+      code &= "  " & elemType & " initData = " & generateExpression(node.rcArgs[0]) & ";\n"
+      code &= "  memcpy(&array[i], &initData, sizeof(" & elemType & "));\n"
+      code &= "}\n"
+  else:
+    if typeName == "char*":
+      if node.rcArgs.len == 1: code = "rc_string_new(" & generateExpression(node.rcArgs[0]) & ")"
+      else: code = "rc_string_new(\"\")"
+    else:
+      code = "rc_new(" & typeName
+      if node.rcArgs.len > 0:
+        code &= ", "
+        for i, arg in node.rcArgs:
+          if i > 0: code &= ", "
+          code &= generateExpression(arg)
+      code &= ")"
+  
+  if context != cgExpression:
+    code &= ";\n"
+    return indentLine(code, context)
+  else: return code
+
+# =========================== INITIALIZATION GENERATORS ============================
+proc generateRcInit(node: Node, context: CodegenContext): string =
+  var 
+    code = ""
+    hasStructLiteralStyle = false
+  if node.rcArgs.len > 0:
+    let firstArg = node.rcArgs[0]
+    hasStructLiteralStyle = 
+      firstArg.kind == nkBinaryExpr and 
+      firstArg.op == "=" and
+      firstArg.left.kind == nkIdentifier
+  
+  if hasStructLiteralStyle:
+    let tempVar = "__rc_init_" & $node.line & "_" & $node.col
+    var initCode = node.rcType & " " & tempVar & " = "
+    
+    var fields: seq[string] = @[]
+    for arg in node.rcArgs:
+      if arg.kind == nkBinaryExpr and arg.op == "=":
+        let 
+          fieldName = generateExpression(arg.left)
+          fieldValue = generateExpression(arg.right)
+        fields.add("." & fieldName & " = " & fieldValue)
+    
+    if fields.len > 0: initCode &= "{" & fields.join(", ") & "};\n"
+    else: initCode &= "{};\n"
+    
+    initCode &= node.rcType & "* __rc_result = rc_new(" & node.rcType & ", " & tempVar & ");\n"
+    code = initCode
+    
+    if context == cgExpression: code = "__rc_result"
+    else: code = initCode
+      
+  else:
+    code = "rc_new(" & node.rcType
+    
+    if node.rcArgs.len > 0:
+      code &= ", "
+      for i, arg in node.rcArgs:
+        if i > 0: code &= ", "
+        code &= generateExpression(arg)
+    code &= ")"
+  
+  if context != cgExpression:
+    code &= ";\n"
+    return indentLine(code, context)
+  else: return code
 
 # =========================== BASIC EXPRESSION GENERATORS ============================
 proc generateLiteral(node: Node): string =
@@ -48,7 +327,7 @@ proc generateLiteral(node: Node): string =
   of nkStringLit: "\"" & escapeString(node.literalValue) & "\""
   else: ""
 
-proc generateIdentifier(node: Node): string =
+proc generateIdentifier(node: Node): string {.used.} =
   node.identName
 
 # =========================== DEREFERENCE GENERATORS ============================
@@ -76,16 +355,25 @@ proc generateExpression(node: Node): string =
   of nkArrayType: result = generateArrayType(node)
   of nkLiteral, nkStringLit: result = generateLiteral(node)
   of nkAddressOf: result = generateAddressOf(node)
-  of nkDeref: result = generateDeref(node)  # Now it's defined
+  of nkDeref: result = generateDeref(node)
   of nkGroup: result = "(" & generateExpression(node.groupExpr) & ")"
+  
+  # ADD THESE CASES for reference counting:
+  of nkRcNew: result = generateRcNew(node, cgExpression)
+  of nkRcInit: result = generateRcInit(node, cgExpression)
+  of nkRcRetain: result = generateRcRetain(node, cgExpression)
+  of nkRcRelease: result = generateRcRelease(node, cgExpression)
+  of nkWeakRef: result = generateWeakRef(node, cgExpression)
+  of nkStrongRef: result = generateStrongRef(node, cgExpression)
+  
   else: result = "/* ERROR: unhandled expression */"
 
 # =========================== GROUP GENERATORS ============================
-proc generateGroup(node: Node, context: CodegenContext): string =
+proc generateGroup(node: Node, context: CodegenContext): string {.used.} =
   "(" & generateExpression(node.groupExpr) & ")"
 
 # =========================== LOOP GENERATORS ============================
-proc generateFor(node: Node, context: CodegenContext): string =
+proc generateFor(node: Node, context: CodegenContext): string {.used.} =
   var code = ""
 
   if node.forInit == nil and node.forCondition != nil and node.forUpdate == nil:
@@ -114,367 +402,353 @@ proc generateFor(node: Node, context: CodegenContext): string =
   return indentLine(code, context)
 
 # =========================== RANGE GENERATORS ============================
-proc generateForRange(node: Node, context: CodegenContext): string =
+proc generateForRange(node: Node, context: CodegenContext): string {.used.} =
   if node.rangeTarget == nil:
     return indentLine("/* ERROR: No range target */\n", context)
 
   var
     isRange = false
     startVal, endVal: string
-
-  # Check if this is a range expression (start..end)
   if node.rangeTarget.kind == nkBinaryExpr and node.rangeTarget.op == "..":
     isRange = true
-    if node.rangeTarget.left != nil:
-      startVal = generateExpression(node.rangeTarget.left)
-    if node.rangeTarget.right != nil:
-      endVal = generateExpression(node.rangeTarget.right)
-
+    if node.rangeTarget.left != nil:  startVal = generateExpression(node.rangeTarget.left)
+    if node.rangeTarget.right != nil: endVal = generateExpression(node.rangeTarget.right)
   var code = ""
 
   if isRange:
-    # Handle range loops: for x in start..end
     if node.rangeValue != nil: 
       code = "for (int " & node.rangeValue.identName & " = " & startVal & "; " &
           node.rangeValue.identName & " <= " & endVal & "; " & node.rangeValue.identName & "++) {\n"
     elif node.rangeIndex != nil: 
       code = "for (int " & node.rangeIndex.identName & " = " & startVal & "; " &
           node.rangeIndex.identName & " <= " & endVal & "; " & node.rangeIndex.identName & "++) {\n"
-    else: 
-      code = "for (int _i = " & startVal & "; _i <= " & endVal & "; _i++) {\n"
+    else: code = "for (int _i = " & startVal & "; _i <= " & endVal & "; _i++) {\n"
   else:
-    # Handle collection loops: for x in collection
     let target = generateExpression(node.rangeTarget)
     var isString = false
 
-    # Check if target is a string
     case node.rangeTarget.kind
-    of nkStringLit:
-      isString = true
+    of nkStringLit: isString = true
     of nkIdentifier:
       let name = node.rangeTarget.identName
       if name == "s" or name == "str" or name == "text" or name.endsWith("Str") or name.endsWith("String"): 
         isString = true
     else:
-      # Check the generated expression
-      if target.startsWith("\"") or target.contains("char*"): 
-        isString = true
+      if target.startsWith("\"") or target.contains("char*"): isString = true
 
     if isString:
-      # String iteration
       code = "for (int _i = 0; " & target & "[_i] != '\\0'; _i++) {\n"
-      if node.rangeIndex != nil: 
-        code &= "  int " & node.rangeIndex.identName & " = _i;\n"
-      if node.rangeValue != nil: 
-        code &= "  char " & node.rangeValue.identName & " = " & target & "[_i];\n"
+      if node.rangeIndex != nil: code &= "  int " & node.rangeIndex.identName & " = _i;\n"
+      if node.rangeValue != nil: code &= "  char " & node.rangeValue.identName & " = " & target & "[_i];\n"
     else:
-      # Array iteration
-      code = "for (int _i = 0; _i < (int)(sizeof(" & target & ") / sizeof(" & target & "[0])); _i++) {\n"
-      if node.rangeIndex != nil: 
-        code &= "  int " & node.rangeIndex.identName & " = _i;\n"
+      code = "for (int _i = 0; _i < RC_GET_HEADER(" & target & ")->array_count; _i++) {\n"
+      if node.rangeIndex != nil: code &= "  int " & node.rangeIndex.identName & " = _i;\n"
       if node.rangeValue != nil:
         var elemType = "int" 
         if node.rangeTarget.kind == nkArrayLit and node.rangeTarget.elements.len > 0:
           let firstElem = node.rangeTarget.elements[0]
-          if firstElem.kind == nkStringLit: 
-            elemType = "char*"
+          if firstElem.kind == nkStringLit: elemType = "char*"
           elif firstElem.kind == nkLiteral:
             if firstElem.literalValue.contains('.') or firstElem.literalValue.contains('e') or
                 firstElem.literalValue.contains('E'): 
               elemType = "double"
         code &= "  " & elemType & " " & node.rangeValue.identName & " = " & target & "[_i];\n"
 
-  # Add body code
   if node.rangeBody != nil:
     let bodyCode = generateBlock(node.rangeBody, cgFunction)
     for line in bodyCode.splitLines:
-      if line.len > 0: 
-        code &= "  " & line & "\n"
+      if line.len > 0: code &= "  " & line & "\n"
 
   code &= "}\n"
   return indentLine(code, context)
 
 # =========================== STATEMENT GENERATORS ============================
-proc generateCBlock(node: Node, context: CodegenContext): string =
+proc generateCBlock(node: Node, context: CodegenContext): string {.used.} =
   var cCode = node.cCode.strip(leading = false, trailing = true)
-
-  # Check if this looks like a function definition
   let looksLikeFunction = (" int " in cCode or " void " in cCode or " char " in cCode or " float " in cCode or
                            " double " in cCode) and "(" in cCode and "){" in cCode
-
   if looksLikeFunction:
-    # Function-like C block
-    if context == cgFunction:
-      # Inside a function body - indent it
-      result = cCode.replace("\n", "\n  ")
-    else:
-      # At global scope or in expression - no indentation
-      result = cCode
-  else:
-    # Not a function - just use as-is
-    result = cCode
-  
-  # Ensure it ends with newline
-  if result.len > 0 and result[^1] != '\n': 
-    result &= "\n"
+    if context == cgFunction: result = cCode.replace("\n", "\n  ")
+    else: result = cCode
+  else: result = cCode
+  if result.len > 0 and result[^1] != '\n': result &= "\n"
 
 # =========================== TYPE INFERENCE ============================
 proc inferTypeFromIdentifier(name: string): string =
-  # Try to infer type from identifier name patterns
-  
-  # Check for pointer patterns first
   if name.endsWith("Ptr"):
-    let baseName = name[0..^4]  # Remove "Ptr"
-    let baseType = inferTypeFromIdentifier(baseName)
+    let 
+      baseName = name[0..^4]
+      baseType = inferTypeFromIdentifier(baseName)
     return baseType & "*"
   
   elif name.endsWith("_ptr"):
-    let baseName = name[0..^5]  # Remove "_ptr"
-    let baseType = inferTypeFromIdentifier(baseName)
+    let 
+      baseName = name[0..^5]
+      baseType = inferTypeFromIdentifier(baseName)
     return baseType & "*"
   
   elif name.startsWith("p_"):
-    let baseName = name[2..^1]  # Remove "p_"
-    let baseType = inferTypeFromIdentifier(baseName)
+    let 
+      baseName = name[2..^1]
+      baseType = inferTypeFromIdentifier(baseName)
     return baseType & "*"
   
-  # Check for string patterns
-  elif name.endsWith("Str") or name.endsWith("String") or name.endsWith("_str"):
-    return "char*"
-  
-  # Check for size/count patterns
-  elif name.endsWith("Count") or name.endsWith("Size") or name.endsWith("Len"):
-    return "size_t"
-  
-  # Check for boolean patterns
-  elif name.endsWith("Flag") or name.endsWith("Enabled") or name.startsWith("is"):
-    return "bool"
-  
-  # Check for float patterns
-  elif name.endsWith("F") or name.endsWith("_f") or name.contains("Float"):
-    return "double"
-  
-  # Common variable names that suggest types
+  elif name.endsWith("Str") or name.endsWith("String") or name.endsWith("_str"):    return "char*"
+  elif name.endsWith("Count") or name.endsWith("Size") or name.endsWith("Len"):     return "size_t"
+  elif name.endsWith("Flag") or name.endsWith("Enabled") or name.startsWith("is"):  return "bool"
+  elif name.endsWith("F") or name.endsWith("_f") or name.contains("Float"):         return "double"
+
   elif name == "str" or name == "text" or name == "message" or 
-       name == "path" or name == "filename" or name == "url":
-    return "char*"
-  
+       name == "path" or name == "filename" or name == "url": return "char*"
   elif name == "count" or name == "length" or name == "size" or 
-       name == "index" or name == "i" or name == "j" or name == "k":
-    return "int"
-  
+       name == "index" or name == "i" or name == "j" or name == "k": return "int"
   elif name == "flag" or name == "enabled" or name == "visible" or 
-       name == "active" or name == "ready":
-    return "bool"
-  
-  else:
-    # Default to int for unknown identifiers
-    return "int"
+       name == "active" or name == "ready": return "bool"
+  else: return "int"
 
 # =========================== TYPE INFERENCE ============================
 proc inferTypeFromExpression(node: Node): string =
-  if node == nil: 
-    return "int"
+  if node == nil: return "int"
 
   case node.kind
+  of nkCall:
+    let funcName = node.callFunc
+    
+    case funcName
+    of "alloc":
+      if node.callArgs.len >= 1:
+        let typeArg = node.callArgs[0]
+        var elemType = "int"
+        
+        case typeArg.kind
+        of nkIdentifier: elemType = typeArg.identName
+        of nkLiteral, nkStringLit: elemType = typeArg.literalValue
+        else: elemType = "int"
+    
+        if elemType == "string": elemType = "char*"
+        return elemType & "*" 
+
+  of nkRcNew:
+    var typeName = node.rcType
+    if typeName == "string" or typeName == "char*":       return "char*" 
+    if typeName.contains("[") and typeName.contains("]"): return typeName & "*"
+    else: return typeName & "*"
+
+  of nkRcInit:
+    var typeName = node.rcType
+    return typeName & "*"
+
   of nkAddressOf:
     let targetType = inferTypeFromExpression(node.operand)
     return targetType & "*"
   
   of nkDeref:
     let ptrType = inferTypeFromExpression(node.operand)
-    # Remove one level of pointer
-    if ptrType.endsWith("*"):
-      return ptrType[0..^2].strip()
-    else:
-      return ptrType
+    if ptrType.endsWith("*"): return ptrType[0..^2].strip()
+    else: return ptrType
   
   of nkLiteral:
     let val = node.literalValue
-    if val == "NULL": 
-      return "void*" 
-    if val.contains('.') or val.contains('e') or val.contains('E'): 
-      return "double"
+    if val == "NULL": return "void*" 
+    if val.contains('.') or val.contains('e') or val.contains('E'): return "double"
     else:
-      if val == "true" or val == "false": 
-        return "bool"
+      if val == "true" or val == "false": return "bool"
       return "int"
   
-  of nkStructLiteral: 
-    return node.structType
+  of nkStructLiteral: return node.structType
+  of nkStringLit: return "char*"
+  of nkIdentifier: return inferTypeFromIdentifier(node.identName)
   
-  of nkStringLit:     
-    return "char*"
-  
-  of nkIdentifier:
-    return inferTypeFromIdentifier(node.identName)
-  
-  of nkCall:
-    let funcName = node.callFunc
-    case funcName
-    of "alloc":
-      if node.callArgs.len >= 1:
-        let typeArg = node.callArgs[0]
-        if typeArg.kind == nkIdentifier: 
-          return typeArg.identName & "*"
-      return "void*"
-    
-    of "getmem":
-      return "void*"
-    
-    of "len":
-      return "size_t"
-    
-    of "sizeof":
-      return "size_t"
-    
-    else:
-      # For other function calls, we don't know the return type
-      return "int"
-
   of nkArrayLit:
-    if node.elements.len > 0:
-      return inferTypeFromExpression(node.elements[0])
-    else: 
-      return "int"
+    if node.elements.len > 0: return inferTypeFromExpression(node.elements[0])
+    else: return "int"
 
   of nkBinaryExpr:
     let 
-      leftType = inferTypeFromExpression(node.left)
+      leftType  = inferTypeFromExpression(node.left)
       rightType = inferTypeFromExpression(node.right)
 
-    # Type promotion rules
-    if leftType == "double" or rightType == "double": 
-      return "double"
-    elif leftType == "float" or rightType == "float": 
-      return "float"
+    if leftType == "double" or rightType == "double": return "double"
+    elif leftType == "float" or rightType == "float": return "float"
     elif leftType == "char*" or rightType == "char*": 
-      # String concatenation or comparison
-      if node.op in ["+", "==", "!=", "<", ">", "<=", ">="]:
-        return "char*"
-      else:
-        return "int"
+      if node.op in ["+", "==", "!=", "<", ">", "<=", ">="]: return "char*"
+      else: return "int"
     elif leftType == "bool" or rightType == "bool":
-      # Boolean operations
-      if node.op in ["&&", "||", "==", "!="]:
-        return "bool"
-      else:
-        return "int"
-    else: 
-      return "int"
+      if node.op in ["&&", "||", "==", "!="]: return "bool"
+      else: return "int"
+    else: return "int"
   
-  of nkFieldAccess:
-    # For field access, we need to know the struct type
-    return "int"
+  of nkFieldAccess: return "int"
   
   of nkIndexExpr:
-    # Array indexing returns the element type
     let arrayType = inferTypeFromExpression(node.left)
-    # If it's a pointer type, remove one * to get element type
-    if arrayType.endsWith("*"):
-      return arrayType[0..^2].strip()
-    else:
-      # Assume it's an array of ints
-      return "int"
-  
-  else: 
-    return "int"
+    if arrayType.endsWith("*"): return arrayType[0..^2].strip()
+    else: return "int"
+  else: return "int"
 
 # =========================== VARIABLE DECLARATION ============================
 proc generateVarDecl(node: Node, context: CodegenContext): string =
-  # if node.varValue != nil:
-  #   echo "  value kind: ", node.varValue.kind
+  let shouldBeRC = isReferenceCountedType(node.varType) or
+                   (node.varValue != nil and 
+                    isReferenceCountedType(inferTypeFromExpression(node.varValue)))
   
-  var cType = node.varType
-  
-  # Check for array type: [size]type
-  if cType.startsWith("[") and cType.contains("]"):
-    let closeBracket = cType.find(']')
-    if closeBracket > 0:
-      let 
-        sizePart = cType[1..<closeBracket]  # Should be "3"
-        elemType = cType[closeBracket+1..^1]  # Should be "int"
+  if shouldBeRC: rcVariables[node.varName] = true
+  if node.varValue != nil and node.varValue.kind == nkCall:
+    let callNode = node.varValue
+    if callNode.callFunc == "alloc":
+      var typeName = node.varType
+      if typeName.len == 0: typeName = inferTypeFromExpression(callNode) 
+      if typeName.len == 0: typeName = "void*"
       
-      var code = ""
-      if node.varValue != nil and node.varValue.kind == nkArrayLit:
-        # With initializer: [3]int = [1,2,3] -> int arr[3] = {1,2,3}
-        code = elemType & " " & node.varName & "[" & sizePart & "] = " & generateExpression(node.varValue)
-      else:
-        # Without initializer
-        code = elemType & " " & node.varName & "[" & sizePart & "]"
-      
+      var code = typeName & " " & node.varName & " = " & generateCall(callNode, cgExpression)
       code &= ";\n"
+      
+      rcVariables[node.varName] = true
       return indentLine(code, context)
   
-  # Check for enum types (uppercase first letter)
-  if cType.len > 0 and cType[0].isUpperAscii() and cType != "NULL":
-    let valStr = if node.varValue != nil: 
-                   " = " & generateExpression(node.varValue) 
-                 else: " = 0"
-    return indentLine(cType & " " & node.varName & valStr & ";", context)
+  if node.varValue != nil and node.varValue.kind == nkCall:
+    let callNode = node.varValue
+    if callNode.callFunc == "getmem" or callNode.callFunc == "alloc":
+      var typeName = node.varType
+      
+      if typeName.len == 0:
+        if callNode.callFunc == "alloc" and callNode.callArgs.len >= 2:
+          let typeArg = callNode.callArgs[0]
+          if typeArg.kind == nkIdentifier: typeName = typeArg.identName & "*"
+          else: typeName = "void*"
+        else: typeName = "void*"
+      
+      var code = typeName & " " & node.varName & " = " & generateCall(callNode, cgExpression)
+      code &= ";\n"
+      
+      rcVariables[node.varName] = true
+      return indentLine(code, context)
   
-  # Check if this looks like an enum type (starts with uppercase)
-  if cType.len > 0 and cType[0].isUpperAscii() and cType != "NULL":
-    # For enums, keep the type as-is
+  # ========== Handle array literals ==========
+  if node.varValue != nil and node.varValue.kind == nkArrayLit:
+    let arrayNode = node.varValue
+    var 
+      elemType = "int"
+      isStringArray = false
+    
+    if arrayNode.elements.len > 0:
+      let firstElem = arrayNode.elements[0]
+      case firstElem.kind
+      of nkStringLit:
+        elemType = "char*"
+        isStringArray = true
+      of nkLiteral:
+        if firstElem.literalValue.contains('.') or 
+           firstElem.literalValue.contains('e') or 
+           firstElem.literalValue.contains('E'):
+          elemType = "double"
+        else: elemType = "int"
+      else: elemType = "int"
+    
+    rcVariables[node.varName] = true
+    var code = elemType & "* " & node.varName & " = rc_new_array(" & 
+               elemType & ", " & $arrayNode.elements.len & ");\n"
+    
+    for i, elem in arrayNode.elements:
+      case elem.kind
+      of nkStringLit: code &= indentLine(node.varName & "[" & $i & "] = rc_string_new(\"" & 
+                      escapeString(elem.literalValue) & "\");\n", context)
+      else: code &= indentLine(node.varName & "[" & $i & "] = " & 
+                          generateExpression(elem) & ";\n", context)
+    return indentLine(code, context)
+    
+  if node.varValue != nil and node.varValue.kind == nkArrayLit and node.varValue.elements.len == 0:
+    rcVariables[node.varName] = true
+    let emptyCode = "int* " & node.varName & " = rc_new_array(int, 0);\n"
+    return indentLine(emptyCode, context)
+        
+  let (isArrayTypeResult, elemType, size) = isArrayType(node.varType)
+  if isArrayTypeResult:
+    var arrayCode = ""
+    if node.varValue != nil and node.varValue.kind == nkArrayLit:
+      arrayCode = elemType & " " & node.varName & "[" & size & "] = " & 
+                 generateExpression(node.varValue)
+    else: 
+      arrayCode = elemType & " " & node.varName & "[" & size & "]"
+    arrayCode &= ";\n"
+    return indentLine(arrayCode, context)
+    
+# ===========================================================
+  if isArrayTypeResult:
+    var arrayCode = ""
+    if node.varValue != nil and node.varValue.kind == nkArrayLit:
+      arrayCode = elemType & " " & node.varName & "[" & size & "] = " & 
+                 generateExpression(node.varValue)
+    else: 
+      arrayCode = elemType & " " & node.varName & "[" & size & "]"
+    arrayCode &= ";\n"
+    return indentLine(arrayCode, context)
+  
+  if node.varType.len > 0 and node.varType[0].isUpperAscii() and node.varType != "NULL":
     let valStr = if node.varValue != nil: 
                    " = " & generateExpression(node.varValue) 
                  else: " = 0"
-    return indentLine(cType & " " & node.varName & valStr & ";", context)
-
+    return indentLine(node.varType & " " & node.varName & valStr & ";", context)
+  
   if node.varValue != nil and node.varValue.kind == nkCall:
     if node.varValue.callFunc == "getmem":
-      cType &= "*"  # Turn 'double' into 'double*'
+      var cType = node.varType
+      cType &= "*"
+      
+      let valStr = 
+        if node.varValue != nil: " = " & generateExpression(node.varValue) 
+        else: ""
+      return indentLine(cType & " " & node.varName & valStr & ";", context)
   
-    let valStr = if node.varValue != nil: 
-                   " = " & generateExpression(node.varValue) 
-                 else: ""
-                 
-    return indentLine(cType & " " & node.varName & valStr & ";", context)
-
   if ',' in node.varName:
     let 
       names      = node.varName.split(',')
       firstName  = names[0].strip()
       secondName = names[1].strip()
  
-    var code = ""
-    
+    var multiCode = "" 
     if node.varValue != nil and node.varValue.kind == nkCall:
       let funcCall = node.varValue
       
       if ',' in node.varType:
-        let types      = node.varType.split(',')
-        let firstType  = types[0].strip() 
-        let secondType = types[1].strip()
+        let   
+          types      = node.varType.split(',')
+          firstType  = types[0].strip() 
+          secondType = types[1].strip()
         
-        code = secondType & " " & secondName & " = NULL;\n"
-        code &= firstType & " " & firstName & " = " & 
+        multiCode = secondType & " " & secondName & " = NULL;\n"
+        multiCode &= firstType & " " & firstName & " = " & 
              generateCall(funcCall, cgExpression, secondName) & ";\n"
-        return indentLine(code, context)
+        return indentLine(multiCode, context)
       else:
-        code = "char* " & secondName & " = NULL;\n"
-        code &= "int " & firstName & " = " & 
+        multiCode = "char* " & secondName & " = NULL;\n"
+        multiCode &= "int " & firstName & " = " & 
              generateCall(funcCall, cgExpression, secondName) & ";\n"
-        return indentLine(code, context)
+        return indentLine(multiCode, context)
   
-  var
-    typeName = node.varType
-    isArray = false
-    isString = false
-    isEnum = false  # Add this flag
+  if node.varValue != nil and node.varValue.kind == nkStringLit:
+    let shouldBeRC = true  # String literals are always RC
+    if shouldBeRC: rcVariables[node.varName] = true
+    
+    var code = "char* " & node.varName & " = rc_string_new("
+    code &= generateExpression(node.varValue) & ");\n"
+    return indentLine(code, context)
 
-  # Check if this is an enum type
-  if typeName.len > 0 and typeName[0].isUpperAscii():
-    # Check if we have a corresponding enum definition
-    # For now, assume any uppercase type is an enum
-    isEnum = true
+  var
+    typeName     = node.varType
+    isArrayVar   = false
+    isStringVar  = false
+    isEnumVar    = false
+
+  if typeName.len > 0 and typeName[0].isUpperAscii(): 
+    isEnumVar = true
 
   if typeName.len == 0 and node.varValue != nil:
     if node.varValue.kind == nkStringLit:
       typeName = "char*"
-      isString = true
+      isStringVar = true
     elif node.varValue.kind == nkArrayLit:
-      isArray = true
+      isArrayVar = true
       if node.varValue.elements.len > 0:
         let firstElem = node.varValue.elements[0]
         if firstElem.kind == nkStringLit: typeName = "char*"
@@ -487,38 +761,37 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
     else: typeName = inferTypeFromExpression(node.varValue)
 
   elif typeName.endsWith("[]"):
-    isArray = true
+    isArrayVar = true
     typeName = typeName[0 ..^ 3]
-  elif typeName.contains("[") and typeName.contains("]"): isArray = true
-  elif typeName == "char*": isString = true
+  elif typeName.contains("[") and typeName.contains("]"): isArrayVar = true
+  elif typeName == "char*": isStringVar = true
 
   if node.varValue != nil and node.varValue.kind == nkCall:
     if node.varValue.callFunc == "getmem" or node.varValue.callFunc == "alloc":
-      if not typeName.endsWith("*"):
-        typeName &= "*"
+      if not typeName.endsWith("*"): typeName &= "*"
 
-  var code = ""
-  if isArray:
-    if node.varValue != nil and 
-      node.varValue.kind == nkArrayLit: code = typeName & " " & node.varName & "[] = "
-    else: code = typeName & "* " & node.varName & " = "
-  elif isString: code = "char* " & node.varName & " = "
-  elif isEnum: code = typeName & " " & node.varName & " = "  # Use enum type
-  else: code = typeName & " " & node.varName & " = "
+  var finalCode = ""
+  if isArrayVar:
+    if node.varValue != nil and node.varValue.kind == nkArrayLit: 
+      finalCode = typeName & " " & node.varName & "[] = "
+    else: finalCode = typeName & "* " & node.varName & " = "
+  elif isStringVar: finalCode = "char* " & node.varName & " = "
+  elif isEnumVar: finalCode = typeName & " " & node.varName & " = "
+  else: finalCode = typeName & " " & node.varName & " = "
 
-  if node.varValue != nil: code &= generateExpression(node.varValue)
+  if node.varValue != nil: finalCode &= generateExpression(node.varValue)
   else:
-    if isString or typeName == "char*": code &= "NULL"
-    elif typeName in ["int", "long", "short", "size_t"]: code &= "0"
-    elif typeName in ["float", "double"]: code &= "0.0"
-    elif typeName == "bool": code &= "false"
-    else: code &= "NULL" 
+    if isStringVar or typeName == "char*": finalCode &= "NULL"
+    elif typeName in ["int", "long", "short", "size_t"]: finalCode &= "0"
+    elif typeName in ["float", "double"]: finalCode &= "0.0"
+    elif typeName == "bool": finalCode &= "false"
+    else: finalCode &= "NULL" 
 
-  code &= ";\n"
-  return indentLine(code, context)
+  finalCode &= ";\n"
+  return indentLine(finalCode, context)
 
 # =========================== ENUM GENERATORS ============================
-proc generateEnum(node: Node): string =
+proc generateEnum(node: Node): string {.used.} =
   var code = "typedef enum {\n"
   for i, valueStr in node.enumValues:
     code &= "    " & valueStr
@@ -529,7 +802,7 @@ proc generateEnum(node: Node): string =
   return code
 
 # ============================ DECLARATION GENERATORS ============================
-proc generateConstDecl(node: Node, context: CodegenContext): string =
+proc generateConstDecl(node: Node, context: CodegenContext): string {.used.} =
   var
     constExpr = "0"
     constType = "int"
@@ -569,47 +842,34 @@ proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): s
       let
         typeArg    = node.callArgs[0]
         countArg   = node.callArgs[1]
-      
       var typeName = "int" 
-      if typeArg.kind == nkIdentifier: typeName = typeArg.identName
-      callCode     = "malloc(" & generateExpression(countArg) & " * sizeof(" & typeName & "))"
-    else: callCode = "malloc(0)"
-  
-  of "len":
-    if node.callArgs.len == 1:
-      let arg      = generateExpression(node.callArgs[0])
-      callCode     = "sizeof(" & arg & ") / sizeof(" & arg & "[0])"
-    else: callCode = "0 /* len() error */"
-
-  of "sizeof":
-    if node.callArgs.len > 0:
-      let typeName = node.callArgs[0].identName
-      let mappedType = case typeName:
-        of "float64": "double"
-        of "int32": "int"
-        else: typeName
-      callCode = "sizeof(" & mappedType & ")"
-    else: callCode = "0"
+      
+      case typeArg.kind
+      of nkIdentifier:           typeName = typeArg.identName
+      of nkLiteral, nkStringLit: typeName = typeArg.literalValue
+      else: typeName = "int"
+      
+      if typeName == "string": typeName = "char*"
+      callCode = "rc_new_array(" & typeName & ", " & generateExpression(countArg) & ")"
+    else: callCode = "rc_new_array(int, 0)"
   
   of "getmem":
-    if node.callArgs.len > 0: callCode = "malloc(" & generateExpression(node.callArgs[0]) & ")"
-    else: callCode = "malloc(0)"
+    if node.callArgs.len > 0: callCode = "rc_alloc(" & generateExpression(node.callArgs[0]) & ")"
+    else: callCode = "rc_alloc(0)"
   
   of "free", "freemem":
     if node.callArgs.len > 0:
-      let arg      = generateExpression(node.callArgs[0])
-      callCode     = "free(" & arg & ")" 
-    else: callCode = "free(NULL)"
+      let arg = generateExpression(node.callArgs[0])
+      callCode = "rc_release(" & arg & ")" 
+    else: callCode = "rc_release(NULL)"
   
   of "print":
-    # Just rename 'print' to 'printf' - same arguments, same behavior
     callCode = "printf("
     if node.callArgs.len > 0:
       for i, arg in node.callArgs:
         if i > 0: callCode &= ", "
         callCode &= generateExpression(arg)
-    callCode &= ")"
-  
+    callCode &= ")"  
   else:
     callCode = funcName & "("
     if node.callArgs.len > 0:
@@ -625,22 +885,38 @@ proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): s
   if context != cgExpression:
     callCode &= ";\n"
     return indentLine(callCode, context)
-  else:
-    return callCode
+  else: return callCode
 
 # =========================== ASSIGNMENT GENERATORS ===========================
-proc generateAssignment(node: Node, context: CodegenContext): string =
-  var   leftCode = ""
-  case  node.left.kind
-  of    nkIdentifier:   leftCode = node.left.identName
-  of    nkFieldAccess:  leftCode = generateFieldAccess(node.left)
-  else:                 leftCode = generateExpression(node.left)
-
-  var code = leftCode & " = " & generateExpression(node.right) & ";\n"
+proc generateAssignment(node: Node, context: CodegenContext): string {.used.} =
+  var 
+    leftCode = ""
+    varName = ""
+  
+  case node.left.kind
+  of nkIdentifier:
+    leftCode = node.left.identName
+    varName = node.left.identName
+  of nkFieldAccess:
+    leftCode = generateFieldAccess(node.left)
+    if node.left.base.kind == nkIdentifier:
+      varName = node.left.base.identName
+  else:
+    leftCode = generateExpression(node.left)
+  
+  var code = ""
+  
+  if varName.len > 0 and isRcVariable(varName):
+    code &= "if (" & leftCode & ") " & generateRcReleaseStmt(varName)
+    code &= leftCode & " = " & generateExpression(node.right) & ";\n"
+    code &= "if (" & leftCode & ") " & generateRcRetainStmt(varName)
+  else:
+    code = leftCode & " = " & generateExpression(node.right) & ";\n"
+  
   return indentLine(code, context)
 
 # ============================ RETURN GENERATORS =============================
-proc generateReturn(node: Node, context: CodegenContext): string =
+proc generateReturn(node: Node, context: CodegenContext): string {.used.} =
   var code = ""
   
   case node.callArgs.len
@@ -678,10 +954,30 @@ proc generateIndexExpr(node: Node): string =
 
 # ============================ ARRAY GENERATORS =============================
 proc generateArrayLiteral(node: Node): string =
-  var elements: seq[string]
-  for elem in node.elements:
-    elements.add(generateExpression(elem))
-  return "{" & elements.join(", ") & "}"
+  if node.elements.len == 0: 
+    return "rc_new_array(int, 0)"
+  
+  var elemType = "int"
+  if node.elements.len > 0:
+    let firstElem = node.elements[0]
+    if firstElem.kind == nkStringLit:
+      elemType = "char*"
+    elif firstElem.kind == nkLiteral and (firstElem.literalValue.contains('.') or firstElem.literalValue.contains('e')):
+      elemType = "double"
+  
+  var code = "({\n"
+  code &= "    " & elemType & "* _tmp = rc_new_array(" & elemType & ", " & $node.elements.len & ");\n"
+  
+  for i, elem in node.elements:
+    if elem.kind == nkStringLit:
+      code &= "    _tmp[" & $i & "] = rc_string_new(\"" & escapeString(elem.literalValue) & "\");\n"
+    else:
+      let val = generateExpression(elem)
+      code &= "    _tmp[" & $i & "] = " & val & ";\n"
+  
+  code &= "    _tmp;\n"
+  code &= "})"
+  return code
 
 # ============================== IF GENERATORS ================================
 proc generateIf(node: Node, context: CodegenContext): string =
@@ -705,25 +1001,19 @@ proc generateIf(node: Node, context: CodegenContext): string =
   return indentLine(code, context)
 
 # =========================== STRUCT GENERATORS ============================
-proc generateStruct(node: Node): string =
+proc generateStruct(node: Node): string {.used.} =
   var code = "typedef struct {\n"
 
-  # Change node.fields to node.structFields
   for field in node.structFields: 
     code &= "  " & field.varType & " " & field.varName & ";\n"
-  
   code &= "} " & node.structName & ";\n\n"
   return code
 
+# ============================ STRUCT LITERAL GENERATORS ======================
 proc generateStructLiteral(node: Node): string =
-  # Check if this is actually an enum initialization
   if node.fieldValues.len == 1:
     let assignment = node.fieldValues[0]
-    if assignment.left.identName == "value":
-      # This is an enum initialization
-      return generateExpression(assignment.right)
-  
-  # Regular struct literal
+    if assignment.left.identName == "value": return generateExpression(assignment.right)
   var 
     resultStruct = "{"
     initializers: seq[string]
@@ -742,140 +1032,134 @@ proc generateFieldAccess(node: Node): string =
   resultField &= "." & node.field.identName
   return resultField
 
+# ============================= RC CLEANUP ================================
+proc getCleanupString(vars: seq[tuple[name: string, typeName: string, isArray: bool]]): string =
+  var cleanup = ""
+  for rcVar in vars:
+    if rcVar.isArray and (rcVar.typeName == "char**" or rcVar.typeName == "char*"):
+      cleanup &= "    if (" & rcVar.name & ") rc_release_array(" & rcVar.name & ", (void (*)(void*))rc_release);\n"
+    elif rcVar.isArray: cleanup &= "    if (" & rcVar.name & ") rc_release(" & rcVar.name & ");\n"
+    else: cleanup &= "    if (" & rcVar.name & ") rc_release(" & rcVar.name & ");\n"
+  return cleanup
 
 # ============================== GENERATE BLOCK ================================
 proc generateBlock(node: Node, context: CodegenContext): string =
-  if node == nil: return ""
-  var
-    blockResult = ""
-    deferStack: seq[string] = @[]
-
-  for stmt in node.statements:
-    case stmt.kind
-    of nkDefer:
-      let deferCode = generateExpression(stmt.deferExpr)
-      deferStack.add(deferCode & ";\n")
-    else:
-      var stmtCode = ""
+  var blockResult = ""
+  var localRCVars: seq[tuple[name: string, typeName: string, isArray: bool]] = @[]
+  
+  if node.statements.len > 0:
+    for stmt in node.statements:
       case stmt.kind
-      of nkAssignment: stmtCode = generateAssignment(stmt, context)
-      of nkReturn:     stmtCode = generateReturn(stmt, context)
-      of nkCBlock:     stmtCode = generateCBlock(stmt, context)
-      of nkVarDecl:    stmtCode = generateVarDecl(stmt, context)
-      of nkConstDecl:  stmtCode = generateConstDecl(stmt, context)
-      of nkCall:       stmtCode = generateCall(stmt, context)
-      of nkIf:         stmtCode = generateIf(stmt, context)
-      of nkFor:        stmtCode = generateFor(stmt, context)
-      of nkForRange:   stmtCode = generateForRange(stmt, cgFunction)
-      of nkSwitch:     stmtCode = generateSwitch(stmt, context)
-      else:
-        continue 
+      of nkVarDecl:
+        blockResult &= generateVarDecl(stmt, context)
+        
+        if stmt.varType.len > 0:
+          let (isArr, _, _) = isArrayType(stmt.varType)
+          if isReferenceCountedType(stmt.varType) or isArr:
+            localRCVars.add((name: stmt.varName, typeName: stmt.varType, isArray: isArr))
+        elif stmt.varValue != nil:
+          if stmt.varValue.kind == nkArrayLit:
+            var elemType = "int"
+            if stmt.varValue.elements.len > 0:
+              let first = stmt.varValue.elements[0]
+              if first.kind == nkStringLit: elemType = "char*"
+              elif first.kind == nkLiteral and (first.literalValue.contains('.') or first.literalValue.contains('e')):
+                elemType = "double"
+            localRCVars.add((name: stmt.varName, typeName: elemType & "*", isArray: true))
+          else:
+            let 
+              inferred = inferTypeFromExpression(stmt.varValue)
+              (isArr, _, _) = isArrayType(inferred)
+            if isReferenceCountedType(inferred) or isArr:
+              localRCVars.add((name: stmt.varName, typeName: inferred, isArray: isArr))
 
-      if stmtCode.len > 0: blockResult &= stmtCode
+      of nkConstDecl: 
+        blockResult &= generateConstDecl(stmt, context)
+      of nkReturn:
+        if localRCVars.len > 0:
+          blockResult &= "\n    // Cleanup before return\n"
+          blockResult &= getCleanupString(localRCVars)
+        blockResult &= "    " & generateReturn(stmt, context)
+        return blockResult
 
-  if deferStack.len > 0:
-    for i in countdown(deferStack.len - 1, 0):
-      blockResult &= indentLine(deferStack[i], context)
+      of nkAssignment: blockResult &= generateAssignment(stmt, context)
+      of nkCall:       blockResult &= generateCall(stmt, context, "")
+      of nkIf:         blockResult &= generateIf(stmt, context)
+      of nkFor:        blockResult &= generateFor(stmt, context)
+      of nkForRange:   blockResult &= generateForRange(stmt, context)
+      of nkSwitch:     blockResult &= generateSwitch(stmt, context)
+      of nkCBlock:     blockResult &= generateCBlock(stmt, context)
+      else: discard
 
+  if localRCVars.len > 0:
+    blockResult &= "\n    // Block scope cleanup\n"
+    blockResult &= getCleanupString(localRCVars)
+      
   return blockResult
+
+# =========================== SWITCH GENERATOR ============================
+proc generateSwitch(node: Node, context: CodegenContext): string =
+  if node.switchTarget == nil: 
+    return indentLine("/* ERROR: No switch target */\n", context)
+  
+  var code = "switch (" & generateExpression(node.switchTarget) & ") {\n"
+  
+  for caseNode in node.cases:
+    # Generate separate case statements for each value
+    for i, value in caseNode.caseValues:
+      code &= "  case " & generateExpression(value) & ":\n"
+      if i == caseNode.caseValues.len - 1:
+        # Last value in this case group
+        let bodyCode = generateBlock(caseNode.caseBody, cgFunction)
+        for line in bodyCode.splitLines:
+          if line.len > 0: 
+            code &= "    " & line & "\n"
+        code &= "    break;\n"
+      else:
+        code &= "    // fallthrough\n"
+  
+  if node.defaultCase != nil:
+    code &= "  default:\n"
+    let defaultCode = generateBlock(node.defaultCase.defaultBody, cgFunction)
+    for line in defaultCode.splitLines:
+      if line.len > 0: 
+        code &= "    " & line & "\n"
+    code &= "    break;\n"
+  
+  code &= "}\n"
+  return indentLine(code, context)
+
+# =========================== DEFER GENERATORS ============================
+proc generateDefer(node: Node, context: CodegenContext): string =
+  if node.deferExpr == nil: return ""
+  return generateExpression(node.deferExpr) & ";"
 
 # =========================== STRUCTURE GENERATORS ============================
 proc generateFunction(node: Node): string =
   var code = ""
   
-  if node.funcName == "main":
+  if node.funcName == "main": 
     code = "int main() {\n"
   else:
-    code = node.returnType & " " & node.funcName & "("
-    
+    var paramsCode = ""
     if node.params.len > 0:
       for i, param in node.params:
-        if i > 0: code &= ", "
-        code &= param.varType & " " & param.varName
-
-    if node.returnsError:
-      if node.params.len > 0: code &= ", "
-      code &= "char** error_out"
-    elif node.params.len == 0:
-      code &= "void"
-    code &= ") {\n"
-  
-  if node.returnsError:
-    code &= "  *error_out = NULL;\n"
-  
-  var
-    deferStack: seq[string] = @[]
-    hasExplicitReturn = false
+        if i > 0: paramsCode &= ", "
+        paramsCode &= param.varType & " " & param.varName
+    else:
+      paramsCode = "void"
+      
+    code = node.returnType & " " & node.funcName & "(" & paramsCode & ") {\n"
 
   if node.body != nil:
-    for stmt in node.body.statements:
-      if stmt.kind == nkDefer:
-        let deferCode = generateCall(stmt.deferExpr, cgExpression, "") & ";\n"
-        deferStack.add("  " & deferCode)
-      elif stmt.kind == nkReturn:
-        hasExplicitReturn = true
-        
-        var returnCode = ""
-        if deferStack.len > 0:
-          returnCode &= "\n  // Execute deferred statements\n"
-          for i in countdown(deferStack.len - 1, 0):
-            returnCode &= deferStack[i]
+    let bodyCode = generateBlock(node.body, cgFunction)
+    code &= bodyCode
 
-        returnCode &= generateReturn(stmt, cgFunction)
-        code &= returnCode
-      else:
-        case stmt.kind
-        of nkAssignment:    code &= generateAssignment(stmt, cgFunction)
-        of nkCall:          code &= generateCall(stmt, cgFunction, "")
-        of nkVarDecl:       code &= generateVarDecl(stmt, cgFunction)
-        of nkCBlock:        code &= generateCBlock(stmt, cgFunction)
-        of nkConstDecl:     code &= generateConstDecl(stmt, cgFunction)
-        of nkIf:            code &= generateIf(stmt, cgFunction)
-        of nkFor:           code &= generateFor(stmt, cgFunction)
-        of nkForRange:      code &= generateForRange(stmt, cgFunction)
-        of nkSwitch:        code &= generateSwitch(stmt, cgFunction)
-        else: discard
-  
-  if not hasExplicitReturn:
-    if deferStack.len > 0:
-      code &= "\n  // Deferred statements\n"
-      for i in countdown(deferStack.len - 1, 0):
-        code &= deferStack[i]
-
-    if node.funcName == "main": code &= "  return 0;\n"
-    elif node.returnType != "void":
-      code &= "  // WARNING: Missing return value\n"
-      code &= "  return 0;\n"
+  if node.funcName == "main" and not code.contains("return 0;"):
+    code &= "    return 0;\n"
   
   code &= "}\n"
   return code
-
-# =========================== SWITCH GENERATOR ============================
-proc generateSwitch(node: Node, context: CodegenContext): string =
-  var code = "switch (" & generateExpression(node.switchTarget) & ") {\n"
-  if node.switchTarget == nil: return ""
-
-  for caseNode in node.cases:
-    for i, value in caseNode.caseValues:
-      code &= "  case " & generateExpression(value) & ":\n"
-
-    let bodyCode = generateBlock(caseNode.caseBody, cgFunction)
-    for line in bodyCode.splitLines:
-      if line.len > 0: code &= "    " & line & "\n"
-    code &= "    break;\n"
-
-  if node.defaultCase != nil:
-    code &= "  default:\n"
-    let defaultCode = generateBlock(node.defaultCase.defaultBody, cgFunction)
-    for line in defaultCode.splitLines:
-      if line.len > 0: code &= "    " & line & "\n"
-    code &= "    break;\n"
-  code &= "}\n"
-  return indentLine(code, context)
-
-# =========================== DEFER GENERATOR ============================
-proc generateDefer(node: Node, context: CodegenContext): string =
-  return ""
 
 # =========================== CASE GENERATOR ============================
 proc generateCase(node: Node, context: CodegenContext): string {.used.} =
@@ -901,13 +1185,13 @@ proc generateProgram(node: Node): string =
   var
     functionCode =    ""
     hasCMain =        false
-    haZalMain =  false
-    includes =        ""
+    haZalMain =       false
+    userIncludes =    ""
+    userCode =        ""
     defines =         ""
     otherTopLevel =   ""
     structsCode =     ""
 
-  # First pass: collect everything in correct order
   for funcNode in node.functions:
     case funcNode.kind
     of nkStruct:    structsCode &= generateStruct(funcNode)
@@ -916,18 +1200,25 @@ proc generateProgram(node: Node): string =
 
     of nkCBlock:
       let   cCode = generateCBlock(funcNode, cgGlobal)
-      if    cCode.strip().startsWith("#include"): includes &= cCode
-      else: otherTopLevel &= cCode
-      if    "int main()" in cCode: hasCMain = true
+      if    cCode.strip().startsWith("#include"):
+        userIncludes &= cCode
+      else:
+        userCode &= cCode 
+      if "int main()" in cCode: hasCMain = true
 
     of nkFunction:
       functionCode &= generateFunction(funcNode)
       if funcNode.funcName == "main": haZalMain = true
     
     of nkVarDecl: otherTopLevel &= generateVarDecl(funcNode, cgGlobal)
+    of nkRcNew, nkRcRetain, nkRcRelease, nkWeakRef, nkStrongRef:
+      userCode &= generateCBlock(funcNode, cgGlobal) & "\n"
     else: discard
   
-  result = includes & defines & structsCode & otherTopLevel & functionCode
+  result = userIncludes 
+  result &= RC_HEADER & "\n\n"
+  result &= userCode 
+  result &= defines & structsCode & otherTopLevel & functionCode
   
   if not hasCMain and not haZalMain:
     result &= "\nint main() {\n"
@@ -937,18 +1228,19 @@ proc generateProgram(node: Node): string =
 
 # =========================== MAIN DISPATCH ============================
 proc generateC*(node: Node, context: string = "global"): string =
-  let     cgContext =
-    if    context == "function": cgFunction
-    elif  context == "global": cgGlobal
+  let cgContext =
+    if context == "function": cgFunction
+    elif context == "global": cgGlobal
     else: cgGlobal
 
   case node.kind
-  of nkStruct:          generateStruct(node)
-  of nkFieldAccess:     generateFieldAccess(node)
-  of nkStructLiteral:   return generateStructLiteral(node)
   of nkProgram:         generateProgram(node)
   of nkPackage:         "// Package: " & node.packageName & "\n"
   of nkFunction:        generateFunction(node)
+  of nkStruct:          generateStruct(node)
+  of nkFieldAccess:     generateFieldAccess(node)
+  of nkStructLiteral:   return generateStructLiteral(node)
+  of nkEnum:            return generateEnum(node)
   of nkAssignment:      generateAssignment(node, cgContext)
   of nkReturn:          generateReturn(node, cgContext)
   of nkBlock:           generateBlock(node, cgContext)
@@ -956,12 +1248,11 @@ proc generateC*(node: Node, context: string = "global"): string =
   of nkConstDecl:       generateConstDecl(node, cgContext)
   of nkArrayType:       generateArrayType(node)
   of nkIdentifier:      generateIdentifier(node)
-  of nkEnum:            return generateEnum(node)
   of nkCall:            return generateCall(node, cgExpression)
   of nkIf:              generateIf(node, cgContext)
   of nkFor:             generateFor(node, cgContext)
-  of nkAddressOf:       return generateAddressOf(node)  # Add this
-  of nkDeref:           return generateDeref(node)      # Add this
+  of nkAddressOf:       return generateAddressOf(node)
+  of nkDeref:           return generateDeref(node)
   of nkForRange:        return generateForRange(node, cgContext)
   of nkSwitch:          generateSwitch(node, cgContext)
   of nkDefer:           return generateDefer(node, cgContext)
@@ -970,9 +1261,17 @@ proc generateC*(node: Node, context: string = "global"): string =
   of nkSwitchExpr:      "/* switch_expr */"
   of nkGroup:           generateGroup(node, cgContext)
   of nkElse:            ""
-  of nkPtrType:         "/* ptr_type */"    # Add handler
-  of nkRefType:         "/* ref_type */"    # Add handler
-  of nkBinaryExpr, nkIndexExpr, nkArrayLit: generateExpression(node)
-  of nkVarDecl, nkInferredVarDecl:          generateVarDecl(node, cgContext)
-  of nkLiteral, nkStringLit:                generateLiteral(node)
-
+  of nkPtrType:         "/* ptr_type */"
+  of nkRefType:         "/* ref_type */"
+  
+  # Reference counting nodes
+  of nkRcNew:           return generateRcNew(node, cgContext)
+  of nkRcRetain:        return generateRcRetain(node, cgContext)
+  of nkRcRelease:       return generateRcRelease(node, cgContext)
+  of nkWeakRef:         return generateWeakRef(node, cgContext)
+  of nkStrongRef:       return generateStrongRef(node, cgContext)
+  of nkRcInit:          return generateRcInit(node, cgContext)
+  
+  of nkBinaryExpr, nkIndexExpr, nkArrayLit: return generateExpression(node)
+  of nkVarDecl, nkInferredVarDecl: return generateVarDecl(node, cgContext)
+  of nkLiteral, nkStringLit: return generateLiteral(node)

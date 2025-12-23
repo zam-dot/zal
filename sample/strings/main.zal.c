@@ -86,17 +86,14 @@ static inline void rc_release(void *ptr) {
 
 
 int main() {
-    int i = 5;
-    switch (i) {
-        case 0:
-            // fallthrough
-        case 2:
-            // fallthrough
-        case 4:
-            // fallthrough
-        case 5:  printf("7 is even\n"); break;
-        case 1:  printf("7 is odd\n"); break;
-        default: printf("shit\n"); break;
+    char *s = rc_string_new("hello");
+    for (int _i = 0; s[_i] != '\0'; _i++) {
+        int  i = _i;
+        char v = s[_i];
+        printf("%d: %c\n", i, v);
     }
+
+    // Block scope cleanup
+    if (s) rc_release(s);
     return 0;
 }

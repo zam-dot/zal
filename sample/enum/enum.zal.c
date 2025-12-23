@@ -85,18 +85,14 @@ static inline void rc_release(void *ptr) {
 }
 
 
+typedef enum { Red, Green, Blue } Color;
+
 int main() {
-    int i = 5;
-    switch (i) {
-        case 0:
-            // fallthrough
-        case 2:
-            // fallthrough
-        case 4:
-            // fallthrough
-        case 5:  printf("7 is even\n"); break;
-        case 1:  printf("7 is odd\n"); break;
-        default: printf("shit\n"); break;
-    }
+    int c1 = Color;
+    int c2 = Color;
+    int c3 = Color;
+    printf("c1 is %d\n", c1);
+    printf("c2 is %d\n", c2);
+    printf("c3 is %d\n", c3);
     return 0;
 }

@@ -4,7 +4,7 @@
 }
 
 func main() {
-    var weights: double = getmem(2 * sizeof(float64))
+    var weights: *double = getmem(2 * sizeof(double))
     weights[0] = 1.23
     weights[1] = 4.56
     print("Value 0: %g\n", weights[0])

@@ -1,4 +1,3 @@
-
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,17 +85,19 @@ static inline void rc_release(void *ptr) {
 
 
 int main() {
-    int i = 5;
-    switch (i) {
-        case 0:
-            // fallthrough
-        case 2:
-            // fallthrough
-        case 4:
-            // fallthrough
-        case 5:  printf("7 is even\n"); break;
-        case 1:  printf("7 is odd\n"); break;
-        default: printf("shit\n"); break;
+    int i = 1;
+    while (i <= 3) {
+        printf("first loop: %d\n", i);
+        i = i + 1;
+    }
+    for (int j = 1; j <= 3; j++) {
+        printf("second loop: %d\n", j);
+    }
+    for (int n = 0; n <= 6; n++) {
+        if (n == 0) {
+            printf("third...\n");
+        }
+        printf("third loop: %d\n", n);
     }
     return 0;
 }

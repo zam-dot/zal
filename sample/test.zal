@@ -1,0 +1,31 @@
+@c {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+}
+
+func simpleTest() {
+    s := "test"
+    a := [1, 2, 3]
+    sa := ["x", "y"]
+    print("Testing...\n")
+}
+
+func nestingTest() {
+    s := "outer"
+    if true {
+        tmp := ["inner1", "inner2"]
+        print("%s\n", tmp[0])
+    } // 'tmp' should be released here, but 's' should stay alive
+    print("%s\n", s)
+}
+
+func main() {
+    simpleTest()
+    nestingTest()
+    for i in 0..5 {
+        msg := "looping"
+        print("%s\n", msg)
+    }
+    return 0
+}

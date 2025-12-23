@@ -85,18 +85,11 @@ static inline void rc_release(void *ptr) {
 }
 
 
-int main() {
-    int i = 5;
-    switch (i) {
-        case 0:
-            // fallthrough
-        case 2:
-            // fallthrough
-        case 4:
-            // fallthrough
-        case 5:  printf("7 is even\n"); break;
-        case 1:  printf("7 is odd\n"); break;
-        default: printf("shit\n"); break;
-    }
+#define PI 3.14159
+#define E 2.71828
+double square(double x) { return x * x; }
+int    main() {
+    printf("PI = %f\n", PI);
+    printf("Square of 5 = %f\n", square(5.0));
     return 0;
 }

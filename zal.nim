@@ -101,12 +101,11 @@ proc filterSelectiveImports(source: string, items: seq[string]): string =
       inc(i)
       continue
     
-    # SKIP @c blocks during selective imports (we'll handle them separately)
     if trimmed.startsWith("@c"):
-      # Skip the entire @c block for now
-      var j = i
-      var braceDepth = 0
-      var foundOpening = false
+      var 
+        j = i
+        braceDepth = 0
+        foundOpening = false
       
       while j < lines.len:
         let currentLine = lines[j]
@@ -159,21 +158,20 @@ proc filterSelectiveImports(source: string, items: seq[string]): string =
     if itemName.len > 0 and items.contains(itemName): shouldInclude = true
     
     if shouldInclude:
-      # Look back for a @c block immediately before this item
       var k = i - 1
       
       while k >= 0:
-        let prevLine = lines[k]
-        let prevTrimmed = prevLine.strip()
+        let   
+          prevLine = lines[k]
+          prevTrimmed = prevLine.strip()
         
         if prevTrimmed.len > 0:
           if prevTrimmed.startsWith("@c"):
-            # Found a @c block, include it
-            var cBlockStart = k
-            var cBlockDepth = 0
-            var cFoundOpening = false
+            var 
+              cBlockStart = k
+              cBlockDepth = 0
+              cFoundOpening = false
             
-            # Include the entire @c block
             while cBlockStart < lines.len:
               output &= lines[cBlockStart] & "\n"
               
@@ -190,15 +188,13 @@ proc filterSelectiveImports(source: string, items: seq[string]): string =
               inc(cBlockStart)
             break
           elif not prevTrimmed.startsWith("//") and prevTrimmed.len > 0:
-            # Not a comment or empty line, and not @c block
-            # So no adjacent @c block
             break
         dec(k)
       
-      # Now include the actual item (function, struct, etc.)
-      var j = i
-      var braceDepth = 0
-      var inFunctionOrStruct = false
+      var 
+        j = i
+        braceDepth = 0
+        inFunctionOrStruct = false
       
       if trimmed.startsWith("func ") or trimmed.startsWith("struct "): 
         inFunctionOrStruct = true
@@ -239,9 +235,9 @@ proc compileToC(source: string, filename: string = ""): string =
 
   let 
     resolvedSource = resolveImports(source, baseDir)
-    tokens = lex(resolvedSource)
-    parser = newParser(tokens)
-    ast = parseProgram(parser)
+    tokens         = lex(resolvedSource)
+    parser         = newParser(tokens)
+    ast            = parseProgram(parser)
 
   if ast == nil: raise newException(ValueError, "Parsing failed!")
   return generateC(ast)
@@ -296,7 +292,6 @@ proc compileFile(filename: string, runImmediately: bool = true): bool =
     formattedCCode = formatCode(cCode, cFilename)
 
   writeFile(cFilename, formattedCCode)
-#  echo "Generated ", cFilename
 
   if runImmediately:
     if compileAndRun(cFilename): return true

@@ -33,6 +33,13 @@ type
     tkDotDot =       ".."
     tkEnum =         "enum"
 
+    # NEW: Reference counting
+    tkRc =           "rc"           # rc keyword
+    tkRcRetain =     "retain"       # retain keyword
+    tkRcRelease =    "release"      # release keyword
+    tkWeak =         "weak"         # weak reference
+    tkStrong =       "strong"       # strong reference
+
     # Literals and identifiers
     tkIdent =       "identifier"
     tkIntLit =      "integer"
@@ -116,6 +123,11 @@ const Keywords = {
   "alloc":    tkAlloc,
   "in":       tkIn,
   "NULL":     tkNil,
+  "rc":       tkRc,
+  "retain":   tkRcRetain,
+  "release":  tkRcRelease,
+  "weak":     tkWeak,
+  "strong":   tkStrong,
 }.toTable
 
 # =========================== HELPER FUNCTIONS ============================
@@ -307,7 +319,6 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
     inc(i)
     inc(col)
 
-  # Remove the last '}' from cCode if we've already counted it
   if cCode.len > 0 and cCode[^1] == '}' and braceCount == 0:
     cCode = cCode[0..^2]
 

@@ -2,7 +2,7 @@
     #include <stdio.h>
 }
 
-@include "math.mg" { PI, square }
+@include "math.zal" { PI, square }
 
 func main() {
     print("PI = %f\n", PI)

@@ -85,18 +85,45 @@ static inline void rc_release(void *ptr) {
 }
 
 
+void simpleTest(void) {
+    char *s = rc_string_new("test");
+    int  *a = rc_new_array(int, 3);
+    a[0] = 1;
+    a[1] = 2;
+    a[2] = 3;
+    char **sa = rc_new_array(char *, 2);
+    sa[0] = rc_string_new("x");
+    sa[1] = rc_string_new("y");
+    printf("Testing...\n");
+
+    // Block scope cleanup
+    if (s) rc_release(s);
+    if (a) rc_release(a);
+    if (sa) rc_release_array(sa, (void (*)(void *))rc_release);
+}
+void nestingTest(void) {
+    char *s = rc_string_new("outer");
+    if (true) {
+        char **tmp = rc_new_array(char *, 2);
+        tmp[0] = rc_string_new("inner1");
+        tmp[1] = rc_string_new("inner2");
+        printf("%s\n", tmp[0]);
+        // Block scope cleanup
+        if (tmp) rc_release_array(tmp, (void (*)(void *))rc_release);
+    }
+    printf("%s\n", s);
+
+    // Block scope cleanup
+    if (s) rc_release(s);
+}
 int main() {
-    int i = 5;
-    switch (i) {
-        case 0:
-            // fallthrough
-        case 2:
-            // fallthrough
-        case 4:
-            // fallthrough
-        case 5:  printf("7 is even\n"); break;
-        case 1:  printf("7 is odd\n"); break;
-        default: printf("shit\n"); break;
+    simpleTest();
+    nestingTest();
+    for (int i = 0; i <= 5; i++) {
+        char *msg = rc_string_new("looping");
+        printf("%s\n", msg);
+        // Block scope cleanup
+        if (msg) rc_release(msg);
     }
     return 0;
 }

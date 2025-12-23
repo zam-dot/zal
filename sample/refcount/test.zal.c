@@ -86,17 +86,19 @@ static inline void rc_release(void *ptr) {
 
 
 int main() {
-    int i = 5;
-    switch (i) {
-        case 0:
-            // fallthrough
-        case 2:
-            // fallthrough
-        case 4:
-            // fallthrough
-        case 5:  printf("7 is even\n"); break;
-        case 1:  printf("7 is odd\n"); break;
-        default: printf("shit\n"); break;
-    }
+    char *s = rc_string_new("test");
+    int  *a = rc_new_array(int, 3);
+    a[0] = 1;
+    a[1] = 2;
+    a[2] = 3;
+    char **sa = rc_new_array(char *, 2);
+    sa[0] = rc_string_new("x");
+    sa[1] = rc_string_new("y");
+    printf("Testing...\n");
+
+    // Block scope cleanup
+    if (s) rc_release(s);
+    if (a) rc_release(a);
+    if (sa) rc_release_array(sa, (void (*)(void *))rc_release);
     return 0;
 }

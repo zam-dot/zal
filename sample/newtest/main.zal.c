@@ -6,7 +6,7 @@
 typedef struct {
     size_t refcount;
     size_t weak_count;
-    size_t array_count; // <--- The missing link
+    size_t array_count;
 } RCHeader;
 
 #define RC_HEADER_SIZE sizeof(RCHeader)
@@ -17,7 +17,6 @@ typedef struct {
         ptr = NULL;                                                                                \
     } while (0)
 
-// Increments the weak reference count
 static inline void rc_weak_retain(void *ptr) {
     if (ptr) {
         RCHeader *header = RC_GET_HEADER(ptr);
@@ -46,20 +45,14 @@ static inline void *rc_alloc_array(size_t elem_size, size_t count) {
     return header ? (char *)header + RC_HEADER_SIZE : NULL;
 }
 
-// Strong release: Kills the object data, but keeps header if weak pointers exist
 static inline void rc_release(void *ptr) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
 
     if (--header->refcount == 0) {
-        // Here you would normally call a destructor for the object's contents
-        // if this was a complex struct rather than just a string.
-
         if (header->weak_count == 0) {
             free(header);
         }
-        // If weak_count > 0, we leave the header allocated so weak pointers
-        // can still check (refcount == 0) to know the object is dead.
     }
 }
 
@@ -83,14 +76,11 @@ static inline void rc_retain(void *ptr) {
     }
 }
 
-// Weak release: The "Cleanup Crew"
 static inline void rc_weak_release(void *ptr) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
 
     if (--header->weak_count == 0) {
-        // If the object is already dead and this was the last weak reference,
-        // the header is finally no longer needed.
         if (header->refcount == 0) {
             free(header);
         }
@@ -154,11 +144,8 @@ int main() {
     int i = 5;
     switch (i) {
         case 0:
-            // fallthrough
         case 2:
-            // fallthrough
         case 4:
-            // fallthrough
         case 5:  printf("7 is even\n"); break;
         case 1:  printf("7 is odd\n"); break;
         default: printf("shit\n"); break;

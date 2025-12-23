@@ -59,10 +59,10 @@ func main() {
         salary: 75000.0,
         department: "Engineering"
     }
-    print("Employee %d:\n", tei.person.id)
-    print("Age: %d\n", tei.person.age)
+    print("Employee %d:\n",  tei.person.id)
+    print("Age: %d\n",       tei.person.age)
     print("Salary: $%.2f\n", tei.salary)
-    print("Dept: %s\n", tei.department)
+    print("Dept: %s\n",      tei.department)
 
     loop()
 

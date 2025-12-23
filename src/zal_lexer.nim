@@ -33,12 +33,12 @@ type
     tkDotDot =       ".."
     tkEnum =         "enum"
 
-    # NEW: Reference counting
-    tkRc =           "rc"           # rc keyword
-    tkRcRetain =     "retain"       # retain keyword
-    tkRcRelease =    "release"      # release keyword
-    tkWeak =         "weak"         # weak reference
-    tkStrong =       "strong"       # strong reference
+    # Reference counting
+    tkRc =           "rc"
+    tkRcRetain =     "retain"
+    tkRcRelease =    "release"
+    tkWeak =         "weak"
+    tkStrong =       "strong"
 
     # Literals and identifiers
     tkIdent =       "identifier"
@@ -228,8 +228,7 @@ proc scanString(source: string, i: var int, line, col: var int): Token =
       inc(i)
       inc(col)
 
-  if i >= source.len:
-    return createToken(tkError, "Unterminated string", startLine, startCol)
+  if i >= source.len: return createToken(tkError, "Unterminated string", startLine, startCol)
 
   inc(i)
   inc(col)
@@ -245,15 +244,13 @@ proc scanCharLiteral(source: string, i: var int, line, col: var int): Token =
   inc(i)
   inc(col)
 
-  if i >= source.len:
-    return createToken(tkError, "Unterminated character literal", startLine, startCol)
+  if i >= source.len: return createToken(tkError, "Unterminated character literal", startLine, startCol)
 
   var charVal =   '\0'
   if source[i] == '\\':
     inc(i)
     inc(col)
-    if i >= source.len:
-      return createToken(tkError, "Unterminated escape sequence", startLine, startCol)
+    if i >= source.len: return createToken(tkError, "Unterminated escape sequence", startLine, startCol)
 
     case source[i]
     of 'n':   charVal = '\n'
@@ -271,12 +268,10 @@ proc scanCharLiteral(source: string, i: var int, line, col: var int): Token =
     inc(i)
     inc(col)
 
-  if i >= source.len or source[i] != '\'':
-    return createToken(tkError, "Expected closing quote", startLine, startCol)
+  if i >= source.len or source[i] != '\'': return createToken(tkError, "Expected closing quote", startLine, startCol)
 
   inc(i)
   inc(col)
-
   createToken(tkCharLit, "'" & charVal & "'", startLine, startCol, true, $charVal)
 
 # =========================== SCAN C BLOCK ============================
@@ -285,9 +280,9 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
     startLine = line
     startCol = col
 
-  inc(i)  # Skip @
+  inc(i)
   inc(col)
-  inc(i)  # Skip c
+  inc(i)
   inc(col)
   
   while i < source.len and source[i] in {' ', '\t', '\n', '\r'}:
@@ -309,7 +304,7 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
     braceCount = 1  
 
   while i < source.len and braceCount > 0:
-    cCode.add(source[i])  # Add character first
+    cCode.add(source[i])
     
     if source[i] == '{':
       inc(braceCount)

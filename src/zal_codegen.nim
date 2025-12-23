@@ -17,14 +17,13 @@ const RC_HEADER {.used.} = r"""
 typedef struct {
     size_t refcount;
     size_t weak_count;
-    size_t array_count; // <--- The missing link
+    size_t array_count;
 } RCHeader;
 
 #define RC_HEADER_SIZE sizeof(RCHeader)
 #define RC_GET_HEADER(ptr) ((RCHeader*)((char*)(ptr) - RC_HEADER_SIZE))
 #define ZAL_RELEASE(ptr) do { rc_release(ptr); ptr = NULL; } while(0)
 
-// Increments the weak reference count
 static inline void rc_weak_retain(void *ptr) {
     if (ptr) {
         RCHeader *header = RC_GET_HEADER(ptr);
@@ -53,20 +52,14 @@ static inline void* rc_alloc_array(size_t elem_size, size_t count) {
     return header ? (char*)header + RC_HEADER_SIZE : NULL;
 }
 
-// Strong release: Kills the object data, but keeps header if weak pointers exist
 static inline void rc_release(void *ptr) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
 
     if (--header->refcount == 0) {
-        // Here you would normally call a destructor for the object's contents
-        // if this was a complex struct rather than just a string.
-        
         if (header->weak_count == 0) {
             free(header);
         }
-        // If weak_count > 0, we leave the header allocated so weak pointers 
-        // can still check (refcount == 0) to know the object is dead.
     }
 }
 
@@ -87,14 +80,11 @@ static inline void rc_retain(void* ptr) {
     }
 }
 
-// Weak release: The "Cleanup Crew"
 static inline void rc_weak_release(void *ptr) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
 
     if (--header->weak_count == 0) {
-        // If the object is already dead and this was the last weak reference,
-        // the header is finally no longer needed.
         if (header->refcount == 0) {
             free(header);
         }
@@ -154,7 +144,7 @@ proc generateRcReleaseStmt(varName: string): string =
 proc isRcVariable(varName: string): bool =
   rcVariables.hasKey(varName)
 
-# =========================== REFERENCE COUNTING GENERATORS (for AST nodes) ============================
+# ======================== REFERENCE COUNTING GENERATORS (for AST nodes) =========================
 proc generateRcRetain(node: Node, context: CodegenContext): string =
   let target = generateExpression(node.rcTarget)
   var code = "rc_retain(" & target & ")"
@@ -164,7 +154,7 @@ proc generateRcRetain(node: Node, context: CodegenContext): string =
     return indentLine(code, context)
   else: return code
 
-# =========================== REFERENCE COUNTING GENERATORS (for AST nodes) ============================
+# ======================== REFERENCE COUNTING GENERATORS (for AST nodes) ========================
 proc generateRcRelease(node: Node, context: CodegenContext): string =
   let target = generateExpression(node.rcTarget)
   var code = "rc_release(" & target & ")"
@@ -177,22 +167,19 @@ proc generateRcRelease(node: Node, context: CodegenContext): string =
 # =========================== ARRAY TYPE DETECTION ============================
 proc isArrayType(typeName: string): (bool, string, string) =
   if typeName.contains("[") and typeName.contains("]"):
-    let bracketPos = typeName.find('[')
-    let closeBracket = typeName.find(']')
+    let 
+      bracketPos = typeName.find('[')
+      closeBracket = typeName.find(']')
     if closeBracket > bracketPos:
-      let elemType = typeName[0..<bracketPos]
-      let size = typeName[bracketPos+1..<closeBracket]
+      let 
+        elemType = typeName[0..<bracketPos]
+        size = typeName[bracketPos+1..<closeBracket]
       return (true, elemType, size)
   
   if typeName.endsWith("*"):
-  # Specific exclusion: char* is a string, not a "generic array" 
-    # that needs rc_release_array depth.
-    if typeName == "char*": 
-      return (false, "", "")
-      
+    if typeName == "char*": return (false, "", "")
     let baseType = typeName[0..^2].strip()
     if " " notin baseType: return (true, baseType, "")
-    
   return (false, "", "")
 
 proc generateWeakRef(node: Node, context: CodegenContext): string =
@@ -215,8 +202,7 @@ proc generateStrongRef(node: Node, context: CodegenContext): string =
 
 # =========================== REFERENCE COUNTING HELPERS ============================
 proc isReferenceCountedType(typeName: string): bool =
-  if typeName.len == 0: 
-    return false
+  if typeName.len == 0: return false
   
   let (isArray, _, _) = isArrayType(typeName)
   if isArray: return true
@@ -226,12 +212,9 @@ proc isReferenceCountedType(typeName: string): bool =
     let baseType = typeName[0..^2].strip()
     return isReferenceCountedType(baseType)
   
-  # FIX: Don't treat struct types as RC-managed by default
   case typeName
   of "string", "String": return true
   else:
-    # Only return true for known RC types
-    # For now, return false for all struct types
     return false
 
 # =========================== REFERENCE COUNTING GENERATORS ============================
@@ -319,7 +302,7 @@ proc generateRcInit(node: Node, context: CodegenContext): string =
     return indentLine(code, context)
   else: return code
 
-# =========================== BASIC EXPRESSION GENERATORS ============================
+# ========================= BASIC EXPRESSION GENERATORS =========================
 proc generateLiteral(node: Node): string =
   case node.kind
   of nkLiteral:
@@ -327,6 +310,7 @@ proc generateLiteral(node: Node): string =
   of nkStringLit: "\"" & escapeString(node.literalValue) & "\""
   else: ""
 
+# =========================== IDENTIFIER GENERATORS =============================
 proc generateIdentifier(node: Node): string {.used.} =
   node.identName
 
@@ -334,6 +318,7 @@ proc generateIdentifier(node: Node): string {.used.} =
 proc generateDeref(node: Node): string =
   return "*" & generateExpression(node.operand)
 
+# =========================== ADDRESS OF GENERATORS ============================
 proc generateAddressOf(node: Node): string =
   return "&" & generateExpression(node.operand)
 
@@ -365,7 +350,6 @@ proc generateExpression(node: Node): string =
   of nkRcRelease: result = generateRcRelease(node, cgExpression)
   of nkWeakRef: result = generateWeakRef(node, cgExpression)
   of nkStrongRef: result = generateStrongRef(node, cgExpression)
-  
   else: result = "/* ERROR: unhandled expression */"
 
 # =========================== GROUP GENERATORS ============================
@@ -1044,8 +1028,9 @@ proc getCleanupString(vars: seq[tuple[name: string, typeName: string, isArray: b
 
 # ============================== GENERATE BLOCK ================================
 proc generateBlock(node: Node, context: CodegenContext): string =
-  var blockResult = ""
-  var localRCVars: seq[tuple[name: string, typeName: string, isArray: bool]] = @[]
+  var 
+    blockResult = ""
+    localRCVars: seq[tuple[name: string, typeName: string, isArray: bool]] = @[]
   
   if node.statements.len > 0:
     for stmt in node.statements:
@@ -1105,18 +1090,16 @@ proc generateSwitch(node: Node, context: CodegenContext): string =
   var code = "switch (" & generateExpression(node.switchTarget) & ") {\n"
   
   for caseNode in node.cases:
-    # Generate separate case statements for each value
     for i, value in caseNode.caseValues:
       code &= "  case " & generateExpression(value) & ":\n"
       if i == caseNode.caseValues.len - 1:
-        # Last value in this case group
         let bodyCode = generateBlock(caseNode.caseBody, cgFunction)
         for line in bodyCode.splitLines:
           if line.len > 0: 
             code &= "    " & line & "\n"
         code &= "    break;\n"
-      else:
-        code &= "    // fallthrough\n"
+     # else:
+      #  code &= "    // fallthrough\n"
   
   if node.defaultCase != nil:
     code &= "  default:\n"
@@ -1148,7 +1131,6 @@ proc generateFunction(node: Node): string =
         paramsCode &= param.varType & " " & param.varName
     else:
       paramsCode = "void"
-      
     code = node.returnType & " " & node.funcName & "(" & paramsCode & ") {\n"
 
   if node.body != nil:

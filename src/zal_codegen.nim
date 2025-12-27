@@ -13,29 +13,24 @@ type CodegenContext* = enum
 const RC_HEADER {.used.} = r"""
 #ifndef ZAL_ARENA_H
 #define ZAL_ARENA_H
-
 #include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdint.h>
-
 typedef struct {
     size_t refcount;
     size_t weak_count;
     size_t array_count;
 } RCHeader;
-
 #define RC_HEADER_SIZE sizeof(RCHeader)
 #define RC_GET_HEADER(ptr) ((RCHeader*)((char*)(ptr) - RC_HEADER_SIZE))
 #define ZAL_RELEASE(ptr) do { rc_release(ptr); ptr = NULL; } while(0)
-
 static inline void rc_weak_retain(void *ptr) {
     if (ptr) {
         RCHeader *header = RC_GET_HEADER(ptr);
         header->weak_count++;
     }
 }
-
 static inline void* rc_alloc(size_t size) {
     RCHeader* header = (RCHeader*)calloc(1, RC_HEADER_SIZE + size);
     if (header) {
@@ -45,7 +40,6 @@ static inline void* rc_alloc(size_t size) {
     }
     return header ? (char*)header + RC_HEADER_SIZE : NULL;
 }
-
 static inline void* rc_alloc_array(size_t elem_size, size_t count) {
     RCHeader* header = (RCHeader*)calloc(1, sizeof(RCHeader) + (elem_size * count));
     if (header) {
@@ -56,7 +50,6 @@ static inline void* rc_alloc_array(size_t elem_size, size_t count) {
     }
     return header ? (char*)header + RC_HEADER_SIZE : NULL;
 }
-
 static inline void rc_release(void *ptr) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
@@ -67,8 +60,6 @@ static inline void rc_release(void *ptr) {
         }
     }
 }
-
-
 #define rc_new_array(type, count) (type*)rc_alloc_array(sizeof(type), count)
 #define rc_string_new(str) ({ \
     const char* _s = (str); \
@@ -77,19 +68,15 @@ static inline void rc_release(void *ptr) {
     if (_d) { strcpy(_d, _s); } \
     _d; \
 })
-
 static inline void rc_retain(void* ptr) {
     if (ptr) {
         RCHeader* header = RC_GET_HEADER(ptr);
         header->refcount++; // [cite: 6]
     }
 }
-
 static inline void rc_release_array(void *ptr, void (*destructor)(void*)) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
-    
-    // If this is the last reference, clean up elements
     if (--header->refcount == 0) {
         if (destructor) {
             void **array = (void **)ptr;
@@ -97,25 +84,20 @@ static inline void rc_release_array(void *ptr, void (*destructor)(void*)) {
                 destructor(array[i]);
             }
         }
-
-        // Only free if no weak refs remain
         if (header->weak_count == 0) {
             free(header);
         }
     }
 }
-
 static inline void rc_weak_release(void *ptr) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
-
     if (--header->weak_count == 0) {
         if (header->refcount == 0) {
             free(header);
         }
     }
 }
-
 #endif
 """
 
@@ -123,20 +105,13 @@ static inline void rc_weak_release(void *ptr) {
 const ARENA_HEADER {.used.} = r"""
 #ifndef ARENA_H
 #define ARENA_H
-
 typedef struct {
     uint8_t *buffer;
     size_t   offset;
     size_t   capacity;
 } Arena;
-
-
-// The "Magic" Bump Allocator
 static inline void *arena_alloc(Arena *a, size_t size) {
-    // 1. Alignment (8-byte alignment for 64-bit systems)
     size_t aligned_size = (size + 7) & ~7;
-
-    // 2. Bounds check (No 50MB crash, just a clean check)
     if (a->offset + aligned_size <= a->capacity) {
         void *ptr = &a->buffer[a->offset];
         a->offset += aligned_size;
@@ -144,11 +119,7 @@ static inline void *arena_alloc(Arena *a, size_t size) {
     }
     return NULL; // Out of memory
 }
-
-// The "Nuke" - Reclaims everything in 0.000s
 static inline void arena_reset(Arena *a) { a->offset = 0; }
-
-// Arena-allocated array creation
 static inline void* arena_alloc_array(Arena *a, size_t elem_size, size_t count) {
     size_t total_size = elem_size * count;
     void *ptr = arena_alloc(a, total_size);
@@ -157,8 +128,6 @@ static inline void* arena_alloc_array(Arena *a, size_t elem_size, size_t count) 
     }
     return ptr;
 }
-
-// Arena-allocated string
 static inline char* arena_string_new(Arena *a, const char* str) {
     if (!str) return NULL;
     size_t len = strlen(str);
@@ -168,7 +137,6 @@ static inline char* arena_string_new(Arena *a, const char* str) {
     }
     return result;
 }
-
 static inline Arena arena_init_dynamic(size_t capacity) {
     uint8_t *buffer = (uint8_t *)calloc(1, capacity);
     if (!buffer) {
@@ -177,7 +145,6 @@ static inline Arena arena_init_dynamic(size_t capacity) {
     }
     return (Arena){.buffer = buffer, .offset = 0, .capacity = capacity};
 }
-
 static inline void arena_free(Arena *a) {
     if (a->buffer) {
         free(a->buffer);
@@ -186,21 +153,17 @@ static inline void arena_free(Arena *a) {
     a->capacity = 0;
     a->offset = 0;
 }
-
-// Keep the existing arena_init for static buffers
 static inline Arena arena_init(void *backing_buffer, size_t capacity) {
     return (Arena){.buffer = (uint8_t *)backing_buffer, .offset = 0, .capacity = capacity};
 }
-
 #endif
 """
 
 var 
   rcVariables = initTable[string, bool]()
   arenaVariables = initTable[string, bool]()
-#  arenaDeclarations = initTable[string, string]()
   maxArenaSize = 262144  # Default 256KB
-
+  actualArenaSize = 0
 
 # =========================== HELPER FUNCTIONS ============================
 proc indentLine(code: string, context: CodegenContext): string =
@@ -261,6 +224,12 @@ proc generateRcRetain(node: Node, context: CodegenContext): string =
     code &= ";\n"
     return indentLine(code, context)
   else: return code
+
+# ======================== REFERENCE COUNTING GENERATORS (for AST nodes) =========================
+proc resetCodegenState*() =
+  rcVariables.clear()
+  arenaVariables.clear()
+  actualArenaSize = 0
 
 # ======================== REFERENCE COUNTING GENERATORS (for AST nodes) ========================
 proc generateRcRelease(node: Node, context: CodegenContext): string =
@@ -515,9 +484,7 @@ proc generateForRange(node: Node, context: CodegenContext): string =
     elif node.rangeIndex != nil: 
       code = "for (int " & node.rangeIndex.identName & " = " & startVal & "; " &
           node.rangeIndex.identName & " <= " & endVal & "; " & node.rangeIndex.identName & "++) {\n"
-    else: 
-      # Auto-create index variable
-      code = "for (int _i = " & startVal & "; _i <= " & endVal & "; _i++) {\n"
+    else: code = "for (int _i = " & startVal & "; _i <= " & endVal & "; _i++) {\n"
   else:
     let target = generateExpression(node.rangeTarget)
     var isString = false
@@ -536,23 +503,17 @@ proc generateForRange(node: Node, context: CodegenContext): string =
       if node.rangeIndex != nil: code &= "  int " & node.rangeIndex.identName & " = _i;\n"
       if node.rangeValue != nil: code &= "  char " & node.rangeValue.identName & " = " & target & "[_i];\n"
     else:
-      # Check if this is an arena array
       var isArenaArray = false
       
       if node.rangeTarget.kind == nkIdentifier:
         let varName = node.rangeTarget.identName
         if arenaVariables.hasKey(varName):
           isArenaArray = true
-          # TODO: We need to track array sizes for arena arrays
-          # For now, we can't get the size of arena array variables
           stderr.writeLine("WARNING: Can't get size of arena array '", varName, "' in for loop")
       
       if isArenaArray:
-        # Arena array - we don't know the size for variables
-        # Could store size when allocating, or document this limitation
         code = "for (int _i = 0; _i < /* UNKNOWN: arena array size - using RC_GET_HEADER as fallback */ RC_GET_HEADER(" & target & ")->array_count; _i++) {\n"
       else:
-        # Regular RC array
         code = "for (int _i = 0; _i < RC_GET_HEADER(" & target & ")->array_count; _i++) {\n"
       
       if node.rangeIndex != nil: code &= "  int " & node.rangeIndex.identName & " = _i;\n"
@@ -574,7 +535,6 @@ proc generateForRange(node: Node, context: CodegenContext): string =
 
   code &= "}\n"
   return indentLine(code, context)
-
 
 # =========================== STATEMENT GENERATORS ============================
 proc generateCBlock(node: Node, context: CodegenContext): string {.used.} =
@@ -702,9 +662,7 @@ proc inferTypeFromExpression(node: Node): string =
 
 # =========================== VARIABLE DECLARATION ============================
 proc generateVarDecl(node: Node, context: CodegenContext): string =
-  # ==================== ARENA ARRAYS ====================
   if node.varValue != nil and node.varValue.kind == nkArenaArrayLit:
-    # Check if global scope (arena arrays can't be global)
     if context == cgGlobal:
       echo "ERROR: @arena arrays must be inside a function, not at global scope"
       echo "  at line ", node.line, ":", node.col
@@ -719,32 +677,29 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
       of nkStringLit:
         elemType = "char*"
       of nkLiteral:
-        if firstElem.literalValue.contains('.') or  # Fixed: "or" not "o#"
+        if firstElem.literalValue.contains('.') or
            firstElem.literalValue.contains('e') or 
            firstElem.literalValue.contains('E'):
           elemType = "double"
-        else: 
-          elemType = "int"
-      else: 
-        elemType = "int"
+        else: elemType = "int"
+      else: elemType = "int"
     
-    # ========== ADD THIS SECTION FOR ARENA SIZE PARSING ==========
-    # Check for custom arena size in varType
-    var customArenaSize = 0
+    var arenaSizeBytes = maxArenaSize 
     if node.varType.startsWith("arena:"):
       let sizeStr = node.varType[6..^1]
       try:
         let sizeNum = parseInt(sizeStr)
-        if sizeNum > maxArenaSize:
-          echo "WARNING: Arena size ", sizeNum, " exceeds buffer size ", maxArenaSize
-          echo "  Consider increasing default arena size or using smaller @arena()"
-      except:
-        discard
+        arenaSizeBytes = sizeNum
+        
+        if sizeNum > actualArenaSize: actualArenaSize = sizeNum
+      except: discard
+
+    var elemCount = arrayNode.elements.len
+    if elemCount == 0:
+        elemCount = 1  # Prevent zero-sized arena allocations
+        
+    var code = elemType & "* " & node.varName & " = (" & elemType & "*)arena_alloc_array(&global_arena, sizeof(" & elemType & "), " & $elemCount & ");\n"
     
-    # Generate allocation using global_arena
-    var code = elemType & "* " & node.varName & " = (" & elemType & "*)arena_alloc_array(&global_arena, sizeof(" & elemType & "), " & $arrayNode.elements.len & ");\n"
-    
-    # Initialize elements
     for i, elem in arrayNode.elements:
       case elem.kind
       of nkStringLit:
@@ -754,17 +709,11 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
         code &= indentLine(node.varName & "[" & $i & "] = " & 
                       generateExpression(elem) & ";\n", context)
     
-    # Mark as arena variable
     arenaVariables[node.varName] = true
-    
-    # Add comment about arena size if custom
-    if customArenaSize > 0:
-      code = "// Arena size: " & $customArenaSize & " bytes\n" & code
     
     return indentLine(code, context)
   
   # ==================== BASIC VARIABLE HANDLING (NON-ARENA) ====================
-  # ... rest of your existing function ...
   let shouldBeRC = isReferenceCountedType(node.varType) or
                    (node.varValue != nil and 
                     isReferenceCountedType(inferTypeFromExpression(node.varValue)))
@@ -1136,8 +1085,8 @@ proc generateArrayLiteral(node: Node): string =
   
   if node.elements.len == 0: 
     if isArenaArray:
-      let elemType = "int"  # Default type for empty array
-      return "(" & elemType & "*)arena_alloc_array(&global_arena, sizeof(" & elemType & "), 0)"
+      let elemType = "int"  # or whatever default
+      return "({\n    " & elemType & "* _tmp = (" & elemType & "*)arena_alloc_array(&global_arena, sizeof(" & elemType & "), 1);\n    _tmp;\n})"
     else:
       return "rc_new_array(int, 0)"
   
@@ -1350,18 +1299,15 @@ proc generateFunction(node: Node, hasArenaArrays: bool = false): string =
   if node.funcName == "main": 
     code = "int main() {\n"
     if hasArenaArrays:
-      # INITIALIZE at START
-      code &= "  // Initialize arena\n"
-      code &= "  global_arena = arena_init_dynamic(" & $maxArenaSize & ");\n"
+#      code &= "  // Initialize arena\n"
+      code &= "  global_arena = arena_init_dynamic(" & $actualArenaSize & ");\n"
     
-    # FUNCTION BODY (allocations, loops, etc.)
     if node.body != nil:
       let bodyCode = generateBlock(node.body, cgFunction)
       code &= bodyCode
     
     if hasArenaArrays:
-      # CLEANUP at END (after all allocations are used)
-      code &= "  // Clean up arena\n"
+#      code &= "  // Clean up arena\n"
       code &= "  arena_free(&global_arena);\n"
     
     if not code.contains("return 0;"):
@@ -1412,30 +1358,81 @@ proc checkNodeForArena(n: Node): bool =
     if n.forBody != nil: return checkNodeForArena(n.forBody)
     else: return false
   of nkForRange:
-    if n.rangeBody != nil: return checkNodeForArena(n.rangeBody)
+    if n.rangeBody != nil: return checkNodeForArena(n.rangeBody)  # FIX: rangeBody, not forBody
     else: return false
   else: return false
 
+# ============================= SCAN FOR ARENA SIZES ==============================
+proc scanForArenaSizes(node: Node): int =
+  case node.kind
+  of nkProgram:
+    for funcNode in node.functions:
+      let size = scanForArenaSizes(funcNode)
+      if size > result: result = size
+      
+  of nkFunction:
+    if node.body != nil:
+      let size = scanForArenaSizes(node.body)
+      if size > result: result = size
+      
+  of nkBlock:
+    for stmt in node.statements:
+      let size = scanForArenaSizes(stmt)
+      if size > result: result = size
+      
+  of nkVarDecl:
+    if node.varType.startsWith("arena:"):
+      let sizeStr = node.varType[6..^1]
+      try:
+        let sizeNum = parseInt(sizeStr)
+        if sizeNum > result: result = sizeNum
+      except:
+        discard
+        
+  of nkIf:
+    if node.ifThen != nil:
+      let size = scanForArenaSizes(node.ifThen)
+      if size > result: result = size
+    if node.ifElse != nil:
+      let size = scanForArenaSizes(node.ifElse)
+      if size > result: result = size
+      
+  of nkFor:
+    if node.forBody != nil:
+      let size = scanForArenaSizes(node.forBody)
+      if size > result: result = size
+      
+  of nkForRange:
+    if node.rangeBody != nil:
+      let size = scanForArenaSizes(node.rangeBody)
+      if size > result: result = size
+      
+  else: result = 0
 # ============================= PROGRAM GENERATOR ==============================
 proc generateProgram(node: Node): string =
+  rcVariables.clear()
+  arenaVariables.clear()
+  actualArenaSize = scanForArenaSizes(node)
+  
+  if actualArenaSize == 0:
+    actualArenaSize = maxArenaSize
+  
   var
     functionCode =    ""
     hasCMain =        false
     haZalMain =       false
-    userIncludes =    ""  # <-- For #include statements from @c blocks
-    userCode =        ""  # <-- For other C code from @c blocks
+    userIncludes =    ""
+    userCode =        ""
     defines =         ""
     otherTopLevel =   ""
     structsCode =     ""
     hasArenaArrays =  false 
 
-  # Check if we need arena support
   for funcNode in node.functions:
     if checkNodeForArena(funcNode):
       hasArenaArrays = true
       break
 
-  # Generate code
   for funcNode in node.functions:
     case funcNode.kind
     of nkStruct:    structsCode &= generateStruct(funcNode)
@@ -1444,14 +1441,13 @@ proc generateProgram(node: Node): string =
     of nkCBlock:
       let cCode = generateCBlock(funcNode, cgGlobal)
       
-      # Check if it's an include or other C code
       let cleanCode = cCode.strip()
       if cleanCode.startsWith("#include") or 
          "#include <" in cCode or 
          "#include \"" in cCode:
-        userIncludes &= cCode  # Includes go to top
+        userIncludes &= cCode
       else:
-        userCode &= cCode      # Other C code
+        userCode &= cCode
       
       if "int main()" in cCode: hasCMain = true
     of nkFunction:
@@ -1463,34 +1459,20 @@ proc generateProgram(node: Node): string =
     else: discard
   
   # ========== BUILD THE FINAL C CODE ==========
-  
-  # 1. Start with user includes (MUST BE FIRST!)
   result = userIncludes 
-  
-  # 2. Add RC header
   result &= RC_HEADER & "\n\n"
-
-  # 3. Add arena header if needed
   if hasArenaArrays:
     result &= ARENA_HEADER & "\n\n"
-    result &= "// Global arena for @arena allocations\n"
     result &= "static Arena global_arena;\n\n"
-  
-  # 4. Add other user C code
   result &= userCode 
-  
-  # 5. Add defines, structs, other top-level declarations
   result &= defines & structsCode & otherTopLevel
-  
-  # 6. Add generated function code
   result &= functionCode
   
-  # 7. Generate main() if not provided by user
   if not hasCMain and not haZalMain:
     result &= "\nint main() {\n"
     result &= "  // Auto-generated entry point\n"
     if hasArenaArrays:
-      result &= "  // Initialize arena\n"
+#      result &= "  // Initialize arena\n"
       result &= "  global_arena = arena_init_dynamic(" & $maxArenaSize & ");\n"
     result &= "  return 0;\n"
     result &= "}\n"

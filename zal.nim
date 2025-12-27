@@ -239,19 +239,6 @@ proc compileToC(source: string, filename: string = ""): string =
     parser         = newParser(tokens)
     ast            = parseProgram(parser)
 
-  # if ast != nil:
-  #   echo "\n=== PARSED AST ==="
-  #   printAst(ast)
-  #
-  #   # Also print what's in the AST
-  #   echo "\n=== PROGRAM NODES ==="
-  #   for i, node in ast.functions:
-  #     echo "Node ", i, ": kind = ", node.kind
-  #     if node.kind == nkVarDecl:
-  #       echo "  varName = ", node.varName
-  #       echo "  varValue.kind = ", node.varValue.kind
-  # else:
-  #   echo "AST is nil!"
   return generateC(ast)
 
 # =========================== FORMAT CODE ================================

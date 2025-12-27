@@ -291,88 +291,58 @@ proc parseArenaDecl(p: Parser): Node =
     col = p.current.col
     tokenStr = p.current.lexeme
   
-  var arenaSizeBytes = 262144  # Default 256KB in bytes
+  var arenaSizeBytes: int = 262144 # Default
   
-  # Extract size from @arena(size) if present
   if tokenStr.startsWith("@arena(") and tokenStr.endsWith(")"):
-    let sizeWithSuffix = tokenStr[7..^2]  # Remove "@arena(" and ")"
+    let sizeWithSuffix = tokenStr[7..^2].strip().toLowerAscii()
     
     if sizeWithSuffix.len > 0:
-      # Parse size with suffix support
       var multiplier = 1
-      var numericPart = sizeWithSuffix
-      
-      # Check for suffixes (case-insensitive)
-      let sizeLower = sizeWithSuffix.toLowerAscii()
-      
-      if sizeLower.endsWith("kb"):
-        multiplier = 1024
-        numericPart = sizeWithSuffix[0..^3]
-      elif sizeLower.endsWith("mb"):
-        multiplier = 1024 * 1024
-        numericPart = sizeWithSuffix[0..^3]
-      elif sizeLower.endsWith("gb"):
+      var numStr = sizeWithSuffix
+
+      if sizeWithSuffix.endsWith("gb") or sizeWithSuffix.endsWith("g"):
         multiplier = 1024 * 1024 * 1024
-        numericPart = sizeWithSuffix[0..^3]
-      elif sizeLower.endsWith("b"):
-        multiplier = 1
-        numericPart = sizeWithSuffix[0..^2]
-      # Also support K, M, G without B
-      elif sizeLower.endsWith("k"):
-        multiplier = 1024
-        numericPart = sizeWithSuffix[0..^2]
-      elif sizeLower.endsWith("m"):
+        numStr = sizeWithSuffix.replace("gb", "").replace("g", "")
+      elif sizeWithSuffix.endsWith("mb") or sizeWithSuffix.endsWith("m"):
         multiplier = 1024 * 1024
-        numericPart = sizeWithSuffix[0..^2]
-      elif sizeLower.endsWith("g"):
-        multiplier = 1024 * 1024 * 1024
-        numericPart = sizeWithSuffix[0..^2]
-      
-      try:
-        let number = parseInt(numericPart.strip())
-        arenaSizeBytes = number * multiplier
-      except:
-        echo "WARNING: Invalid arena size: '", sizeWithSuffix, "', using default"
-        arenaSizeBytes = 262144
-  
-  
-  p.advance()  # Skip @arena or @arena(size)
+        numStr = sizeWithSuffix.replace("mb", "").replace("m", "")
+      elif sizeWithSuffix.endsWith("kb") or sizeWithSuffix.endsWith("k"):
+        multiplier = 1024
+        numStr = sizeWithSuffix.replace("kb", "").replace("k", "")
+
+      try: arenaSizeBytes = parseInt(numStr.strip()) * multiplier
+      except: echo "WARNING: Invalid arena size, using default"
+
+  p.advance() 
   
   if p.current.kind == tkIdent:
-    # Parse identifier ONCE
     let identNode = parseIdentifier(p)
     if identNode == nil: 
       return nil
     
-    # Expect '=' 
     if p.current.kind != tkAssign:
       return nil
     
-    p.advance()  # Skip '='
+    p.advance()
     
-    # Parse the value ONCE
     let valueNode = parseExpression(p)
     if valueNode == nil:
       return nil
     
-    # Check if it's an array literal
     if valueNode.kind == nkArrayLit:
-      # Convert to arena array literal
       let arenaArrayNode = Node(kind: nkArenaArrayLit, nodeKind: nkArenaArrayLit,
                               line: valueNode.line, col: valueNode.col,
                               elements: valueNode.elements)
       
-      # Create var declaration node with arena size in varType
       return Node(kind: nkVarDecl, line: line, col: col, nodeKind: nkVarDecl,
-                  varName: identNode.identName,  # <-- Use identNode here
+                  varName: identNode.identName,
                   varType: "arena:" & $arenaSizeBytes,
-                  varValue: arenaArrayNode)  # <-- Use arenaArrayNode, not value
+                  varValue: arenaArrayNode)
     else:
       return Node(kind: nkVarDecl, line: line, col: col, nodeKind: nkVarDecl,
                   varName: identNode.identName,
                   varType: "arena:" & $arenaSizeBytes,
-                  varValue: valueNode)  # <-- Use original valueNode
-    
+                  varValue: valueNode)
   return nil
 
 # =========================== LITERAL PARSER ============================
@@ -1077,9 +1047,6 @@ proc parseStatement(p: Parser): Node =
 
 # =========================== ARENA DECLARATION PARSER ============================
 proc parseArenaDeclaration(p: Parser): Node {.used.} =
-  # let line = p.current.line
-  # let col = p.current.col
-
   p.advance()
 
   let name = parseIdentifier(p)
@@ -1094,12 +1061,7 @@ proc parseArenaDeclaration(p: Parser): Node {.used.} =
   if sizeExpr.kind == nkLiteral:
     sizeStr = sizeExpr.literalValue
 
-  echo "NOTE: arena name = size syntax not implemented yet"
   return nil
-  # return Node(kind: nkArenaDecl, nodeKind: nkArenaDecl,
-  #             line: line, col: col,
-  #             varName: name.identName, varType: "Arena",
-  #             varValue: Node(kind: nkLiteral, literalValue: sizeStr))
 
 # =========================== BLOCK AND FUNCTION PARSERS ============================
 proc parseBlock(p: Parser): Node =
@@ -1130,14 +1092,14 @@ proc parseFunction(p: Parser): Node =
   let ident = parseIdentifier(p)
   if ident == nil: return nil
 
-  if not p.expectOrError(tkLParen, "Expected '(' after function name"): return nil
+  if not p.expect(tkLParen): return nil
   var params: seq[Node] = @[]
 
   if p.current.kind != tkRParen:
     let paramName = parseIdentifier(p)
     if paramName == nil: return nil
 
-    if not p.expectOrError(tkColon, "Expected ':' after parameter name"): return nil
+    if not p.expect(tkColon): return nil
     let paramType = parseTypeWithConst(p)
     if paramType.len == 0: return nil
 
@@ -1150,7 +1112,7 @@ proc parseFunction(p: Parser): Node =
 
       let nextParamName = parseIdentifier(p)
       if nextParamName == nil: return nil
-      if not p.expectOrError(tkColon, "Expected ':' after parameter name"): return nil
+      if not p.expect(tkColon): return nil
 
       let nextParamType = parseTypeWithConst(p)
       if nextParamType.len == 0: return nil
@@ -1573,7 +1535,7 @@ proc parseSwitch(p: Parser): Node =
         if value == nil: return nil
         caseValues.add(value)
 
-      if not p.expectOrError(tkColon, "Expected ':' after case values"): return nil
+      if not p.expect(tkColon): return nil
       var body: Node = nil
       
       if p.current.kind == tkLBrace: body = parseBlock(p)
@@ -1584,7 +1546,6 @@ proc parseSwitch(p: Parser): Node =
             nodeKind: nkBlock, statements: @[stmt])
       
       if body == nil:
-        echo "Error: Expected statement or block after case at line ", p.current.line
         return nil
 
       let caseNode = Node(kind: nkCase, line: line, col: col, nodeKind: nkCase,
@@ -1594,7 +1555,7 @@ proc parseSwitch(p: Parser): Node =
     elif p.current.kind == tkDefault:
       p.advance()
 
-      if not p.expectOrError(tkColon, "Expected ':' after default"): return nil
+      if not p.expect(tkColon): return nil
       var body: Node = nil
       
       if p.current.kind == tkLBrace:
@@ -1606,18 +1567,15 @@ proc parseSwitch(p: Parser): Node =
             nodeKind: nkBlock, statements: @[stmt])
       
       if body == nil:
-        echo "Error: Expected statement or block after default at line ", p.current.line
         return nil
 
       defaultCase = Node(kind: nkDefault, line: line, col: col, 
         nodeKind: nkDefault, defaultBody: body)
     
     else:
-      echo "Error: Unexpected token in switch: ", p.current.kind, " at line ", p.current.line
       return nil
 
   if not p.expect(tkRBrace):
-    echo "Error: Expected '}' at end of switch at line ", p.current.line
     return nil
 
   return Node(kind: nkSwitch, line: line, col: col, nodeKind: nkSwitch,

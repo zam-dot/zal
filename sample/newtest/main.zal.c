@@ -1,96 +1,15 @@
 #include <stdio.h>
-#ifndef ARENA_H
-#define ARENA_H
-
+#ifndef ZAL_ARENA_H
+#define ZAL_ARENA_H
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
-
-typedef struct {
-    uint8_t *buffer;
-    size_t   offset;
-    size_t   capacity;
-} Arena;
-
-
-// The "Magic" Bump Allocator
-static inline void *arena_alloc(Arena *a, size_t size) {
-    // 1. Alignment (8-byte alignment for 64-bit systems)
-    size_t aligned_size = (size + 7) & ~7;
-
-    // 2. Bounds check (No 50MB crash, just a clean check)
-    if (a->offset + aligned_size <= a->capacity) {
-        void *ptr = &a->buffer[a->offset];
-        a->offset += aligned_size;
-        return ptr;
-    }
-    return NULL; // Out of memory
-}
-
-// The "Nuke" - Reclaims everything in 0.000s
-static inline void arena_reset(Arena *a) { a->offset = 0; }
-
-// Arena-allocated array creation
-static inline void *arena_alloc_array(Arena *a, size_t elem_size, size_t count) {
-    size_t total_size = elem_size * count;
-    void  *ptr = arena_alloc(a, total_size);
-    if (ptr) {
-        memset(ptr, 0, total_size);
-    }
-    return ptr;
-}
-
-// Arena-allocated string
-static inline char *arena_string_new(Arena *a, const char *str) {
-    if (!str) return NULL;
-    size_t len = strlen(str);
-    char  *result = (char *)arena_alloc(a, len + 1);
-    if (result) {
-        strcpy(result, str);
-    }
-    return result;
-}
-
-static inline Arena arena_init_dynamic(size_t capacity) {
-    uint8_t *buffer = (uint8_t *)calloc(1, capacity);
-    if (!buffer) {
-        fprintf(stderr, "ERROR: Failed to allocate %zu bytes for arena\n", capacity);
-        exit(1);
-    }
-    return (Arena){.buffer = buffer, .offset = 0, .capacity = capacity};
-}
-
-static inline void arena_free(Arena *a) {
-    if (a->buffer) {
-        free(a->buffer);
-        a->buffer = NULL;
-    }
-    a->capacity = 0;
-    a->offset = 0;
-}
-
-// Keep the existing arena_init for static buffers
-static inline Arena arena_init(void *backing_buffer, size_t capacity) {
-    return (Arena){.buffer = (uint8_t *)backing_buffer, .offset = 0, .capacity = capacity};
-}
-
-#endif
-
-
-// Global arena for @arena allocations
-static Arena global_arena;
-
-#ifndef ZAL_ARENA_H
-#define ZAL_ARENA_H
-
 typedef struct {
     size_t refcount;
     size_t weak_count;
     size_t array_count;
 } RCHeader;
-
 #define RC_HEADER_SIZE sizeof(RCHeader)
 #define RC_GET_HEADER(ptr) ((RCHeader *)((char *)(ptr) - RC_HEADER_SIZE))
 #define ZAL_RELEASE(ptr)                                                                           \
@@ -98,14 +17,12 @@ typedef struct {
         rc_release(ptr);                                                                           \
         ptr = NULL;                                                                                \
     } while (0)
-
 static inline void rc_weak_retain(void *ptr) {
     if (ptr) {
         RCHeader *header = RC_GET_HEADER(ptr);
         header->weak_count++;
     }
 }
-
 static inline void *rc_alloc(size_t size) {
     RCHeader *header = (RCHeader *)calloc(1, RC_HEADER_SIZE + size);
     if (header) {
@@ -115,7 +32,6 @@ static inline void *rc_alloc(size_t size) {
     }
     return header ? (char *)header + RC_HEADER_SIZE : NULL;
 }
-
 static inline void *rc_alloc_array(size_t elem_size, size_t count) {
     RCHeader *header = (RCHeader *)calloc(1, sizeof(RCHeader) + (elem_size * count));
     if (header) {
@@ -126,7 +42,6 @@ static inline void *rc_alloc_array(size_t elem_size, size_t count) {
     }
     return header ? (char *)header + RC_HEADER_SIZE : NULL;
 }
-
 static inline void rc_release(void *ptr) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
@@ -137,8 +52,6 @@ static inline void rc_release(void *ptr) {
         }
     }
 }
-
-
 #define rc_new_array(type, count) (type *)rc_alloc_array(sizeof(type), count)
 #define rc_string_new(str)                                                                         \
     ({                                                                                             \
@@ -150,19 +63,15 @@ static inline void rc_release(void *ptr) {
         }                                                                                          \
         _d;                                                                                        \
     })
-
 static inline void rc_retain(void *ptr) {
     if (ptr) {
         RCHeader *header = RC_GET_HEADER(ptr);
         header->refcount++; // [cite: 6]
     }
 }
-
 static inline void rc_release_array(void *ptr, void (*destructor)(void *)) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
-
-    // If this is the last reference, clean up elements
     if (--header->refcount == 0) {
         if (destructor) {
             void **array = (void **)ptr;
@@ -170,27 +79,82 @@ static inline void rc_release_array(void *ptr, void (*destructor)(void *)) {
                 destructor(array[i]);
             }
         }
-
-        // Only free if no weak refs remain
         if (header->weak_count == 0) {
             free(header);
         }
     }
 }
-
 static inline void rc_weak_release(void *ptr) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
-
     if (--header->weak_count == 0) {
         if (header->refcount == 0) {
             free(header);
         }
     }
 }
-
 #endif
 
+
+#ifndef ARENA_H
+#define ARENA_H
+typedef struct {
+    uint8_t *buffer;
+    size_t   offset;
+    size_t   capacity;
+} Arena;
+static inline void *arena_alloc(Arena *a, size_t size) {
+    if (size == 0) return NULL; // Don't allocate 0 bytes
+
+    size_t aligned_size = (size + 7) & ~7; // Align to 8 bytes
+    if (a->offset + aligned_size <= a->capacity) {
+        void *ptr = &a->buffer[a->offset];
+        a->offset += aligned_size;
+        return ptr;
+    }
+    return NULL; // Out of memory
+}
+static inline void  arena_reset(Arena *a) { a->offset = 0; }
+static inline void *arena_alloc_array(Arena *a, size_t elem_size, size_t count) {
+    size_t total_size = elem_size * count;
+    void  *ptr = arena_alloc(a, total_size);
+    if (ptr) {
+        memset(ptr, 0, total_size);
+    }
+    return ptr;
+}
+static inline char *arena_string_new(Arena *a, const char *str) {
+    if (!str) return NULL;
+    size_t len = strlen(str);
+    char  *result = (char *)arena_alloc(a, len + 1);
+    if (result) {
+        strcpy(result, str);
+    }
+    return result;
+}
+static inline Arena arena_init_dynamic(size_t capacity) {
+    uint8_t *buffer = (uint8_t *)calloc(1, capacity);
+    if (!buffer) {
+        fprintf(stderr, "ERROR: Failed to allocate %zu bytes for arena\n", capacity);
+        exit(1);
+    }
+    return (Arena){.buffer = buffer, .offset = 0, .capacity = capacity};
+}
+static inline void arena_free(Arena *a) {
+    if (a->buffer) {
+        free(a->buffer);
+        a->buffer = NULL;
+    }
+    a->capacity = 0;
+    a->offset = 0;
+}
+static inline Arena arena_init(void *backing_buffer, size_t capacity) {
+    return (Arena){.buffer = (uint8_t *)backing_buffer, .offset = 0, .capacity = capacity};
+}
+#endif
+
+
+static Arena global_arena;
 
 #define PI 3.14159
 typedef struct {
@@ -206,6 +170,22 @@ typedef struct {
 
 typedef enum { RED, GREEN } Colors;
 
+void loop() {
+    int i = 1;
+    while (i <= 3) {
+        printf("first loop: %d\n", i);
+        i = i + 1;
+    }
+    for (int j = 1; j <= 3; j++) {
+        printf("second loop: %d\n", j);
+    }
+    for (int n = 0; n <= 6; n++) {
+        if (n == 0) {
+            printf("third...\n");
+        }
+        printf("third loop: %d\n", n);
+    }
+}
 int main() {
     // Initialize arena
     global_arena = arena_init_dynamic(262144);

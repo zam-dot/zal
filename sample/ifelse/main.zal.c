@@ -1,20 +1,31 @@
 
-#include <stdbool.h>
 #include <stdio.h>
+#ifndef ZAL_ARENA_H
+#define ZAL_ARENA_H
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 typedef struct {
     size_t refcount;
     size_t weak_count;
-    size_t array_count; // <--- The missing link
+    size_t array_count;
 } RCHeader;
-
 #define RC_HEADER_SIZE sizeof(RCHeader)
 #define RC_GET_HEADER(ptr) ((RCHeader *)((char *)(ptr) - RC_HEADER_SIZE))
-
+#define ZAL_RELEASE(ptr)                                                                           \
+    do {                                                                                           \
+        rc_release(ptr);                                                                           \
+        ptr = NULL;                                                                                \
+    } while (0)
+static inline void rc_weak_retain(void *ptr) {
+    if (ptr) {
+        RCHeader *header = RC_GET_HEADER(ptr);
+        header->weak_count++;
+    }
+}
 static inline void *rc_alloc(size_t size) {
-    RCHeader *header = (RCHeader *)malloc(RC_HEADER_SIZE + size);
+    RCHeader *header = (RCHeader *)calloc(1, RC_HEADER_SIZE + size);
     if (header) {
         header->refcount = 1;
         header->weak_count = 0;
@@ -22,9 +33,8 @@ static inline void *rc_alloc(size_t size) {
     }
     return header ? (char *)header + RC_HEADER_SIZE : NULL;
 }
-
 static inline void *rc_alloc_array(size_t elem_size, size_t count) {
-    RCHeader *header = (RCHeader *)malloc(RC_HEADER_SIZE + (elem_size * count));
+    RCHeader *header = (RCHeader *)calloc(1, sizeof(RCHeader) + (elem_size * count));
     if (header) {
         header->refcount = 1;
         header->weak_count = 0;
@@ -33,26 +43,16 @@ static inline void *rc_alloc_array(size_t elem_size, size_t count) {
     }
     return header ? (char *)header + RC_HEADER_SIZE : NULL;
 }
-
-// Deep release for arrays of RC objects (like strings)
-static inline void rc_release_array(void *ptr, void (*release_element)(void *)) {
+static inline void rc_release(void *ptr) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
+
     if (--header->refcount == 0) {
-        if (release_element && header->array_count > 0) {
-            void **elements = (void **)ptr;
-            for (size_t i = 0; i < header->array_count; i++) {
-                if (elements[i]) {
-                    release_element(elements[i]);
-                    elements[i] = NULL; // Set to NULL after release
-                }
-            }
+        if (header->weak_count == 0) {
+            free(header);
         }
-        free(header);
     }
 }
-
-
 #define rc_new_array(type, count) (type *)rc_alloc_array(sizeof(type), count)
 #define rc_string_new(str)                                                                         \
     ({                                                                                             \
@@ -64,41 +64,48 @@ static inline void rc_release_array(void *ptr, void (*release_element)(void *)) 
         }                                                                                          \
         _d;                                                                                        \
     })
-
 static inline void rc_retain(void *ptr) {
     if (ptr) {
         RCHeader *header = RC_GET_HEADER(ptr);
         header->refcount++; // [cite: 6]
     }
 }
-
-static inline void rc_release(void *ptr) {
+static inline void rc_release_array(void *ptr, void (*destructor)(void *)) {
     if (!ptr) return;
     RCHeader *header = RC_GET_HEADER(ptr);
-    if (--header->refcount == 0) {     // [cite: 7]
-        if (header->weak_count == 0) { // [cite: 7]
-            free(header);              // [cite: 7]
-        } else {
-            header->refcount = 0; // [cite: 8]
+    if (--header->refcount == 0) {
+        if (destructor) {
+            void **array = (void **)ptr;
+            for (size_t i = 0; i < header->array_count; i++) {
+                destructor(array[i]);
+            }
+        }
+        if (header->weak_count == 0) {
+            free(header);
         }
     }
 }
+static inline void rc_weak_release(void *ptr) {
+    if (!ptr) return;
+    RCHeader *header = RC_GET_HEADER(ptr);
+    if (--header->weak_count == 0) {
+        if (header->refcount == 0) {
+            free(header);
+        }
+    }
+}
+#endif
 
 
 int main() {
-    int, char result, err[];
-    if (err != NULL) {
-        printf("Error: %s\n", err);
+    if (7 % 2 == 0) {
+        printf("7 is even\n");
     } else {
-        printf("Result: %d\n", result);
+        printf("7 is odd\n");
     }
-    int, char result2, err2[];
-    if (err2 != NULL) {
-        printf("Error: %s\n", err2);
+    int x = 2;
+    if (x == 0 || x == 2) {
+        printf("works\n");
     }
-
-    // Block scope cleanup
-    if (result, err) rc_release(result, err);
-    if (result2, err2) rc_release(result2, err2);
     return 0;
 }

@@ -1,0 +1,11 @@
+@c {
+    #include <stdio.h>
+}
+
+func main() {
+    print("Hello, World!\n")
+    print("Hello %s\n", "World!")
+    print("2 * 4 = %d\n", 2 * 4)
+
+    print("%.2f %.1f %f\n", 1.2342, 22.3, 3.42)
+}

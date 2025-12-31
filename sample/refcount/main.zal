@@ -25,11 +25,11 @@ func test() {
 }
 
 func main() {
-    // simpleTest()
-    // nestingTest()
-    // for i in 0..5 {
-    //     msg := "looping"
-    //     print("%s\n", msg)
-    // }
- //   test()
+    simpleTest()
+    nestingTest()
+    for i in 0..5 {
+        msg := "looping"
+        print("%s\n", msg)
+    }
+    test()
 }

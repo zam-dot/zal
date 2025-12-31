@@ -3,7 +3,7 @@
 }
 
 func main() {
-    if 7%2 == 0 {
+    if 7 % 2 == 0 {
         print("7 is even\n")
     } else {
         print("7 is odd\n")

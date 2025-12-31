@@ -1,15 +1,8 @@
-@include "arrays.zal" {printhello}
-@c {
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <string.h>
-}
+@c { #include <stdio.h> }
 
 func main() {
-    //arr := [1, 2, 3, 4, 5]
-    arr := [1, 2, 33, 4, 5]
-    for i in 0..(len(arr) - 1) {
+    @arena(100KB) arr = [1, 2, 33, 4, 5]
+    for i in 0..4 {
            print("Value %d \n",arr[i])
     }
-    printhello()
 }

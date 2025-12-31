@@ -105,7 +105,9 @@ typedef struct {
     size_t   capacity;
 } Arena;
 static inline void *arena_alloc(Arena *a, size_t size) {
-    size_t aligned_size = (size + 7) & ~7;
+    if (size == 0) return NULL; // Don't allocate 0 bytes
+
+    size_t aligned_size = (size + 7) & ~7; // Align to 8 bytes
     if (a->offset + aligned_size <= a->capacity) {
         void *ptr = &a->buffer[a->offset];
         a->offset += aligned_size;
@@ -157,7 +159,7 @@ static Arena global_arena;
 
 int main() {
     // Initialize arena
-    global_arena = arena_init_dynamic(262144);
+    global_arena = arena_init_dynamic(1048576);
     double *weights = (double *)arena_alloc_array(&global_arena, sizeof(double), 3);
     weights[0] = 1.32;
     weights[1] = 4.12;

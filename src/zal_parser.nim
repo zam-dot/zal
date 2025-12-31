@@ -452,17 +452,38 @@ proc parseDefer(p: Parser): Node =
   return Node(kind: nkDefer, line: line, col: col, nodeKind: nkDefer, deferExpr: expr)
 
 # =========================== TYPE PARSER ============================
+# In parseType procedure, add support for multi-dimensional array types
 proc parseType(p: Parser): string =
   var 
     typeStr = ""
-    isPointer = false
   
-  if p.current.kind == tkStar:
+  # Parse base type
+  case p.current.kind
+  of tkIntType:
+    typeStr = "int"
     p.advance()
-    isPointer = true
+  of tkFloatType:
+    typeStr = "double"
+    p.advance()
+  of tkStringType:
+    typeStr = "char"
+    p.advance()
+    typeStr &= "*"
+  of tkBoolType:
+    typeStr = "bool"
+    p.advance()
+  of tkSizeTType:
+    typeStr = "size_t"
+    p.advance()
+  of tkIdent:
+    let ident = parseIdentifier(p)
+    if ident != nil: typeStr = ident.identName
+    else: return ""
+  else: return ""
   
-  if p.current.kind == tkLBracket:
-    p.advance() 
+  # Parse array dimensions
+  while p.current.kind == tkLBracket:
+    p.advance()
     
     var size = ""
     if p.current.kind != tkRBracket:
@@ -475,40 +496,11 @@ proc parseType(p: Parser): string =
     
     if not p.expect(tkRBracket): return ""
     
-    let elemType = parseType(p)
-    if elemType.len == 0: return ""
-    
-    typeStr = elemType & "[" & size & "]"
-  else:
-    case p.current.kind
-    of tkIntType:
-      typeStr = "int"
-      p.advance()
-    of tkFloatType:
-      typeStr = "double"
-      p.advance()
-    of tkStringType:
-      typeStr = "char"
-      p.advance()
-      if not isPointer: isPointer = true
-    of tkBoolType:
-      typeStr = "bool"
-      p.advance()
-    of tkSizeTType:
-      typeStr = "size_t"
-      p.advance()
-    of tkIdent:
-      let ident = parseIdentifier(p)
-      if ident != nil: typeStr = ident.identName
-      else: return ""
-    else: return ""
+    typeStr &= "[" & size & "]"
   
+  # Handle pointer stars
   while p.current.kind == tkStar:
     p.advance()
-    isPointer = true
-    typeStr &= "*"
-  
-  if isPointer: 
     if not typeStr.endsWith("*"):
       typeStr &= "*"
   
@@ -558,8 +550,35 @@ proc parseCallExpr(p: Parser): Node =
 # =========================== PRIMARY PARSER ============================
 proc parsePrimary(p: Parser): Node =
   case p.current.kind
+  of tkIdent:
+    let baseNode = parseIdentifier(p)
+    if baseNode == nil: return nil
+
+    var currentNode = baseNode
+    
+    # Handle field access and index expressions
+    while true:
+      if p.current.kind == tkDot:
+        p.advance()
+        let field = parseIdentifier(p)
+        if field == nil: return nil
+        currentNode = Node(kind: nkFieldAccess, line: currentNode.line, col: currentNode.col,
+          nodeKind: nkFieldAccess, base: currentNode, field: field)
+      
+      elif p.current.kind == tkLBracket:
+        p.advance()
+        let index = parseExpression(p)
+        if index == nil: return nil
+        if not p.expect(tkRBracket): return nil
+        currentNode = Node(kind: nkIndexExpr, line: currentNode.line, col: currentNode.col,
+          nodeKind: nkIndexExpr, left: currentNode, right: index)
+      
+      else:
+        break
+    
+    return currentNode
   
-  of tkIdent, tkPrint, tkGetMem, tkFreeMem, tkLen, tkAlloc:
+  of tkPrint, tkGetMem, tkFreeMem, tkLen, tkAlloc:
     if p.peek(1).kind == tkLParen:
       if p.current.lexeme == "String" and p.peek(1).kind == tkLParen:
         let line = p.current.line
@@ -800,6 +819,31 @@ proc parsePrimary(p: Parser): Node =
       p.current = p.tokens[savedPos]
       return parseIdentifier(p)
 
+  of tkLBrace:
+    let line = p.current.line
+    let col = p.current.col
+    
+    p.advance()
+    
+    var elements: seq[Node] = @[]
+    
+    if p.current.kind != tkRBrace:
+      let first = parseExpression(p)
+      if first != nil: 
+        elements.add(first)
+      
+      while p.current.kind == tkComma:
+        p.advance()
+        let next = parseExpression(p)
+        if next != nil: 
+          elements.add(next)
+        else: break
+    
+    if not p.expect(tkRBrace): return nil
+    
+    return Node(kind: nkArrayLit, line: line, col: col,
+      nodeKind: nkArrayLit, elements: elements)
+
   of tkRcRetain:
     let 
       line = p.current.line
@@ -861,6 +905,47 @@ proc parsePrimary(p: Parser): Node =
 
   of tkCBlock: return parseCBlock(p)
   else: return nil
+
+# =========================== ARRAY LITERAL PARSER ============================
+proc parseArrayLiteral(p: Parser): Node =
+  let line = p.current.line
+  let col = p.current.col
+  
+  if not p.expect(tkLBrace): return nil
+  
+  var elements: seq[Node] = @[]
+  
+  if p.current.kind != tkRBrace:
+    # Check if next token starts another array literal
+    if p.current.kind == tkLBrace:
+      # Nested array (matrix)
+      let first = parseArrayLiteral(p)
+      if first != nil:
+        elements.add(first)
+    else:
+      let first = parseExpression(p)
+      if first != nil:
+        elements.add(first)
+    
+    while p.current.kind == tkComma:
+      p.advance()
+      
+      if p.current.kind == tkLBrace:
+        # Nested array
+        let next = parseArrayLiteral(p)
+        if next != nil:
+          elements.add(next)
+        else: break
+      else:
+        let next = parseExpression(p)
+        if next != nil:
+          elements.add(next)
+        else: break
+  
+  if not p.expect(tkRBrace): return nil
+  
+  return Node(kind: nkArrayLit, line: line, col: col,
+    nodeKind: nkArrayLit, elements: elements)
 
 # =========================== STATEMENT VAR DECL ============================
 proc parseVarDecl(p: Parser): Node =

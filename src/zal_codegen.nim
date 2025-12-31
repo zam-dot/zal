@@ -245,7 +245,7 @@ proc generateRcRelease(node: Node, context: CodegenContext): string =
 
 # =========================== ARRAY TYPE DETECTION ============================
 proc isArrayType(typeName: string): (bool, string, string) =
-  if typeName.contains("[") and typeName.contains("]"):
+  if typeName.contains("{") and typeName.contains("}"):
     let 
       bracketPos = typeName.find('[')
       closeBracket = typeName.find(']')
@@ -667,259 +667,325 @@ proc inferTypeFromExpression(node: Node): string =
 
 # =========================== VARIABLE DECLARATION ============================
 proc generateVarDecl(node: Node, context: CodegenContext): string =
+ 
+  # ==================== SECTION 1: ARENA ARRAYS ====================
+  # @arena(size) arr = {1, 2, 3} or @arena arr = {1, 2, 3}
   if node.varValue != nil and node.varValue.kind == nkArenaArrayLit:
-    if context == cgGlobal:
-      echo "ERROR: @arena arrays must be inside a function, not at global scope"
-      echo "  at line ", node.line, ":", node.col
-      return indentLine("// ERROR: @arena arrays cannot be global\n", context)
-    
     let arrayNode = node.varValue
-    var elemType = "int"
     
+    # Check if this is a matrix
+    var isMatrix = false
     if arrayNode.elements.len > 0:
-      let firstElem = arrayNode.elements[0]
-      case firstElem.kind
-      of nkStringLit:
-        elemType = "char*"
-      of nkLiteral:
-        if firstElem.literalValue.contains('.') or
-           firstElem.literalValue.contains('e') or 
-           firstElem.literalValue.contains('E'):
-          elemType = "double"
-        else: elemType = "int"
-      else: elemType = "int"
+        for elem in arrayNode.elements:
+            if elem.kind == nkArrayLit or elem.kind == nkArenaArrayLit:
+                isMatrix = true
+                break
     
-    var arenaSizeBytes = maxArenaSize 
-    if node.varType.startsWith("arena:"):
-      let sizeStr = node.varType[6..^1]
-      try:
-        let sizeNum = parseInt(sizeStr)
-        arenaSizeBytes = sizeNum
+    if isMatrix:
+        # Matrix in arena: need int** not int*
+        var elemType = "int"
+        if arrayNode.elements.len > 0:
+            let firstRow = arrayNode.elements[0]
+            if (firstRow.kind == nkArrayLit or firstRow.kind == nkArenaArrayLit) and 
+               firstRow.elements.len > 0:
+                let firstElem = firstRow.elements[0]
+                case firstElem.kind
+                of nkStringLit:
+                    elemType = "char*"
+                of nkLiteral:
+                    if firstElem.literalValue.contains('.') or
+                       firstElem.literalValue.contains('e') or 
+                       firstElem.literalValue.contains('E'):
+                        elemType = "double"
+                    else:
+                        elemType = "int"
+                else:
+                    elemType = "int"
         
-        if sizeNum > actualArenaSize: actualArenaSize = sizeNum
-      except: discard
-
-    var elemCount = arrayNode.elements.len
-    # DON'T do this: if elemCount == 0: elemCount = 1
+        # Parse arena size
+        var arenaSizeBytes = maxArenaSize
+        if node.varType.startsWith("arena:"):
+            let sizeStr = node.varType[6..^1]
+            try:
+                let sizeNum = parseInt(sizeStr)
+                arenaSizeBytes = sizeNum
+                if sizeNum > actualArenaSize:
+                    actualArenaSize = sizeNum
+            except:
+                discard
+        
+        # Generate int** allocation for matrix
+        var code = ""
+        if elemType == "int":
+            code = "int** " & node.varName & " = (int**)arena_alloc_array(&global_arena, sizeof(int*), " & 
+                   $arrayNode.elements.len & ");\n"
+        elif elemType == "double":
+            code = "double** " & node.varName & " = (double**)arena_alloc_array(&global_arena, sizeof(double*), " & 
+                   $arrayNode.elements.len & ");\n"
+        elif elemType == "char*":
+            code = "char*** " & node.varName & " = (char***)arena_alloc_array(&global_arena, sizeof(char**), " & 
+                   $arrayNode.elements.len & ");\n"
+        
+        # Allocate and initialize each row
+        for i, row in arrayNode.elements:
+            if row.kind == nkArrayLit or row.kind == nkArenaArrayLit:
+                let rowSize = row.elements.len
+                if elemType == "int":
+                    code &= indentLine(node.varName & "[" & $i & "] = (int*)arena_alloc_array(&global_arena, sizeof(int), " & 
+                            $rowSize & ");\n", context)
+                elif elemType == "double":
+                    code &= indentLine(node.varName & "[" & $i & "] = (double*)arena_alloc_array(&global_arena, sizeof(double), " & 
+                            $rowSize & ");\n", context)
+                elif elemType == "char*":
+                    code &= indentLine(node.varName & "[" & $i & "] = (char**)arena_alloc_array(&global_arena, sizeof(char*), " & 
+                            $rowSize & ");\n", context)
+                
+                # Initialize row elements
+                for j, elem in row.elements:
+                    if elem.kind == nkStringLit:
+                        code &= indentLine(node.varName & "[" & $i & "][" & $j & "] = arena_string_new(&global_arena, \"" & 
+                                escapeString(elem.literalValue) & "\");\n", context)
+                    else:
+                        let val = generateExpression(elem)
+                        code &= indentLine(node.varName & "[" & $i & "][" & $j & "] = " & val & ";\n", context)
+        
+        arenaVariables[node.varName] = true
+        return indentLine(code, context)  
+  # ==================== SECTION 2: FIXED-SIZE ARRAYS ====================
+  # Syntax: arr[5] or matrix[2][3] = { {1,2}, {3,4} }
+  if node.varType.contains("[") and node.varType.contains("]"):
+    # Parse base type and dimensions
+    var baseType = node.varType
+    var dims: seq[string] = @[]
     
-    var code = elemType & "* " & node.varName & " = (" & elemType & "*)arena_alloc_array(&global_arena, sizeof(" & elemType & "), " & $elemCount & ");\n"
+    # Extract all [dim] parts
+    while baseType.contains("[") and baseType.contains("]"):
+      let startIdx = baseType.find('[')
+      let endIdx = baseType.find(']')
+      if endIdx > startIdx:
+        dims.add(baseType[startIdx+1..<endIdx])
+        baseType = baseType[0..<startIdx] & baseType[endIdx+1..^1]
     
-    # Only initialize if there are elements
-    for i, elem in arrayNode.elements:
-      case elem.kind
-      of nkStringLit:
-        code &= indentLine(node.varName & "[" & $i & "] = arena_string_new(&global_arena, \"" & 
-                      escapeString(elem.literalValue) & "\");\n", context)
-      else:
-        code &= indentLine(node.varName & "[" & $i & "] = " & 
-                      generateExpression(elem) & ";\n", context)
-    
-    arenaVariables[node.varName] = true
-    
-    return indentLine(code, context)
-  
-  # ==================== BASIC VARIABLE HANDLING (NON-ARENA) ====================
-  let shouldBeRC = isReferenceCountedType(node.varType) or
-                   (node.varValue != nil and 
-                    isReferenceCountedType(inferTypeFromExpression(node.varValue)))
-  
-  if shouldBeRC: rcVariables[node.varName] = true
-  if node.varValue != nil and node.varValue.kind == nkCall:
-    let callNode = node.varValue
-    if callNode.callFunc == "alloc":
-      var typeName = node.varType
-      if typeName.len == 0: typeName = inferTypeFromExpression(callNode) 
-      if typeName.len == 0: typeName = "void*"
+    if dims.len >= 1:
+      # Build C array declaration
+      var code = baseType & " " & node.varName
+      for dim in dims:
+        code &= "[" & dim & "]"
       
-      var code = typeName & " " & node.varName & " = " & generateCall(callNode, cgExpression)
+      # Add initialization if present
+      if node.varValue != nil:
+        code &= " = " & generateExpression(node.varValue)
+      
       code &= ";\n"
-      
-      rcVariables[node.varName] = true
       return indentLine(code, context)
   
+  # ==================== SECTION 3: ARRAY LITERALS (RC arrays) ====================
+  # Syntax: arr := {1, 2, 3} or arr = {1, 2, 3}
+  if node.varValue != nil and node.varValue.kind == nkArrayLit:
+    let arrayNode = node.varValue
+    
+    # Check if this is a matrix (nested array)
+    var isMatrix = false
+    if arrayNode.elements.len > 0:
+      for elem in arrayNode.elements:
+        if elem.kind == nkArrayLit:
+          isMatrix = true
+          break
+    
+    if isMatrix:
+      # Matrix: int** for int matrix, double** for double, etc.
+      let generatedCode = generateArrayLiteral(arrayNode)
+      
+      # Infer matrix type from first element
+      var inferredType = "int**"
+      if arrayNode.elements.len > 0:
+        let firstRow = arrayNode.elements[0]
+        if firstRow.kind == nkArrayLit and firstRow.elements.len > 0:
+          let firstElem = firstRow.elements[0]
+          case firstElem.kind
+          of nkStringLit:
+            inferredType = "char***"
+          of nkLiteral:
+            if firstElem.literalValue.contains('.') or 
+               firstElem.literalValue.contains('e') or 
+               firstElem.literalValue.contains('E'):
+              inferredType = "double**"
+            else:
+              inferredType = "int**"
+          else:
+            inferredType = "int**"
+      
+      rcVariables[node.varName] = true
+      let code = inferredType & " " & node.varName & " = " & generatedCode & ";\n"
+      return indentLine(code, context)
+    else:
+      # Flat array
+      var elemType = "int"
+      var isStringArray = false
+      
+      if arrayNode.elements.len > 0:
+        let firstElem = arrayNode.elements[0]
+        case firstElem.kind
+        of nkStringLit:
+          elemType = "char*"
+          isStringArray = true
+        of nkLiteral:
+          if firstElem.literalValue.contains('.') or 
+             firstElem.literalValue.contains('e') or 
+             firstElem.literalValue.contains('E'):
+            elemType = "double"
+          else:
+            elemType = "int"
+        else:
+          elemType = "int"
+      
+      rcVariables[node.varName] = true
+      var code = elemType & "* " & node.varName & " = rc_new_array(" & 
+                 elemType & ", " & $arrayNode.elements.len & ");\n"
+      
+      # Initialize array elements
+      for i, elem in arrayNode.elements:
+        case elem.kind
+        of nkStringLit:
+          code &= indentLine(node.varName & "[" & $i & "] = rc_string_new(\"" & 
+                  escapeString(elem.literalValue) & "\");\n", context)
+        else:
+          code &= indentLine(node.varName & "[" & $i & "] = " & 
+                          generateExpression(elem) & ";\n", context)
+      
+      return indentLine(code, context)
+  
+  # ==================== SECTION 4: ALLOC/GETMEM CALLS ====================
+  # Syntax: ptr := alloc(T, size) or ptr = getmem(size)
   if node.varValue != nil and node.varValue.kind == nkCall:
     let callNode = node.varValue
-    if callNode.callFunc == "getmem" or callNode.callFunc == "alloc":
+    
+    if callNode.callFunc == "alloc" or callNode.callFunc == "getmem":
       var typeName = node.varType
       
       if typeName.len == 0:
+        # Try to infer type from alloc() arguments
         if callNode.callFunc == "alloc" and callNode.callArgs.len >= 2:
           let typeArg = callNode.callArgs[0]
-          if typeArg.kind == nkIdentifier: typeName = typeArg.identName & "*"
-          else: typeName = "void*"
-        else: typeName = "void*"
+          if typeArg.kind == nkIdentifier:
+            typeName = typeArg.identName & "*"
+          else:
+            typeName = "void*"
+        else:
+          typeName = "void*"
       
-      var code = typeName & " " & node.varName & " = " & generateCall(callNode, cgExpression)
-      code &= ";\n"
+      var code = typeName & " " & node.varName & " = " & 
+                 generateCall(callNode, cgExpression) & ";\n"
       
       rcVariables[node.varName] = true
       return indentLine(code, context)
   
-  # ========== Handle array literals ==========
-  if node.varValue != nil and node.varValue.kind == nkArrayLit:
-    let arrayNode = node.varValue
-    var 
-      elemType = "int"
-      isStringArray = false
-    
-    if arrayNode.elements.len > 0:
-      let firstElem = arrayNode.elements[0]
-      case firstElem.kind
-      of nkStringLit:
-        elemType = "char*"
-        isStringArray = true
-      of nkLiteral:
-        if firstElem.literalValue.contains('.') or 
-           firstElem.literalValue.contains('e') or 
-           firstElem.literalValue.contains('E'):
-          elemType = "double"
-        else: elemType = "int"
-      else: elemType = "int"
-    
-    rcVariables[node.varName] = true
-    var code = elemType & "* " & node.varName & " = rc_new_array(" & 
-               elemType & ", " & $arrayNode.elements.len & ");\n"
-    
-    for i, elem in arrayNode.elements:
-      case elem.kind
-      of nkStringLit: code &= indentLine(node.varName & "[" & $i & "] = rc_string_new(\"" & 
-                      escapeString(elem.literalValue) & "\");\n", context)
-      else: code &= indentLine(node.varName & "[" & $i & "] = " & 
-                          generateExpression(elem) & ";\n", context)
-    return indentLine(code, context)
-    
-  if node.varValue != nil and node.varValue.kind == nkArrayLit and node.varValue.elements.len == 0:
-    rcVariables[node.varName] = true
-    let emptyCode = "int* " & node.varName & " = rc_new_array(int, 0);\n"
-    return indentLine(emptyCode, context)
-        
-  let (isArrayTypeResult, elemType, size) = isArrayType(node.varType)
-  if isArrayTypeResult:
-    var arrayCode = ""
-    if node.varValue != nil and node.varValue.kind == nkArrayLit:
-      arrayCode = elemType & " " & node.varName & "[" & size & "] = " & 
-                 generateExpression(node.varValue)
-    else: 
-      arrayCode = elemType & " " & node.varName & "[" & size & "]"
-    arrayCode &= ";\n"
-    return indentLine(arrayCode, context)
-    
-# ===========================================================
-  if isArrayTypeResult:
-    var arrayCode = ""
-    if node.varValue != nil and node.varValue.kind == nkArrayLit:
-      arrayCode = elemType & " " & node.varName & "[" & size & "] = " & 
-                 generateExpression(node.varValue)
-    else: 
-      arrayCode = elemType & " " & node.varName & "[" & size & "]"
-    arrayCode &= ";\n"
-    return indentLine(arrayCode, context)
-  
-  if node.varType.len > 0 and node.varType[0].isUpperAscii() and node.varType != "NULL":
-    let valStr = if node.varValue != nil: 
-                   " = " & generateExpression(node.varValue) 
-                 else: " = 0"
-    return indentLine(node.varType & " " & node.varName & valStr & ";", context)
-  
-  if node.varValue != nil and node.varValue.kind == nkCall:
-    if node.varValue.callFunc == "getmem":
-      var cType = node.varType
-      cType &= "*"
-      
-      let valStr = 
-        if node.varValue != nil: " = " & generateExpression(node.varValue) 
-        else: ""
-      return indentLine(cType & " " & node.varName & valStr & ";", context)
-  
+  # ==================== SECTION 5: MULTI-VARIABLE DECLARATIONS ====================
+  # Syntax: a, b := func() or a, b = func()
   if ',' in node.varName:
-    let 
-      names      = node.varName.split(',')
-      firstName  = names[0].strip()
-      secondName = names[1].strip()
- 
-    var multiCode = "" 
+    let names = node.varName.split(',')
+    let firstName = names[0].strip()
+    let secondName = names[1].strip()
+    
+    var multiCode = ""
+    
     if node.varValue != nil and node.varValue.kind == nkCall:
       let funcCall = node.varValue
       
       if ',' in node.varType:
-        let   
-          types      = node.varType.split(',')
-          firstType  = types[0].strip() 
-          secondType = types[1].strip()
+        let types = node.varType.split(',')
+        let firstType = types[0].strip()
+        let secondType = types[1].strip()
         
         multiCode = secondType & " " & secondName & " = NULL;\n"
         multiCode &= firstType & " " & firstName & " = " & 
-             generateCall(funcCall, cgExpression, secondName) & ";\n"
-        return indentLine(multiCode, context)
+                     generateCall(funcCall, cgExpression, secondName) & ";\n"
       else:
         multiCode = "char* " & secondName & " = NULL;\n"
         multiCode &= "int " & firstName & " = " & 
-             generateCall(funcCall, cgExpression, secondName) & ";\n"
-        return indentLine(multiCode, context)
+                     generateCall(funcCall, cgExpression, secondName) & ";\n"
+      
+      return indentLine(multiCode, context)
   
+  # ==================== SECTION 6: STRING LITERALS ====================
+  # Syntax: str := "hello" or str = "hello"
   if node.varValue != nil and node.varValue.kind == nkStringLit:
-    let shouldBeRC = true  # String literals are always RC
-    if shouldBeRC: rcVariables[node.varName] = true
+    rcVariables[node.varName] = true
     
     var code = "char* " & node.varName & " = rc_string_new("
     code &= generateExpression(node.varValue) & ");\n"
     return indentLine(code, context)
-
-  var
-    typeName     = node.varType
-    isArrayVar   = false
-    isStringVar  = false
-    isEnumVar    = false
-
-  if typeName.len > 0 and typeName[0].isUpperAscii(): 
+  
+  # ==================== SECTION 7: REGULAR VARIABLES ====================
+  # All other cases: int x = 5, double y = 3.14, etc.
+  
+  # Determine variable type
+  var typeName = node.varType
+  var isEnumVar = false
+  var isStringVar = false
+  var isArrayVar = false
+  
+  if typeName.len > 0 and typeName[0].isUpperAscii():
     isEnumVar = true
-
+  
+  # Type inference for := syntax
   if typeName.len == 0 and node.varValue != nil:
     if node.varValue.kind == nkStringLit:
       typeName = "char*"
       isStringVar = true
     elif node.varValue.kind == nkArrayLit:
       isArrayVar = true
-      if node.varValue.elements.len > 0:
-        let firstElem = node.varValue.elements[0]
-        if firstElem.kind == nkStringLit: typeName = "char*"
-        elif firstElem.kind == nkLiteral:
-          if firstElem.literalValue.contains('.') or 
-            firstElem.literalValue.contains('e') or 
-            firstElem.literalValue.contains('E'):
-            typeName = "double"
-          else: typeName = "int"
-    else: typeName = inferTypeFromExpression(node.varValue)
-
+      # Type inference for array literals already handled above
+    else:
+      typeName = inferTypeFromExpression(node.varValue)
+  
+  # Handle array types
   elif typeName.endsWith("[]"):
     isArrayVar = true
     typeName = typeName[0 ..^ 3]
-  elif typeName.contains("[") and typeName.contains("]"): isArrayVar = true
-  elif typeName == "char*": isStringVar = true
-
-  if node.varValue != nil and node.varValue.kind == nkCall:
-    if node.varValue.callFunc == "getmem" or node.varValue.callFunc == "alloc":
-      if not typeName.endsWith("*"): typeName &= "*"
-
-  var finalCode = ""
+  elif typeName.contains("[") and typeName.contains("]"):
+    isArrayVar = true
+  elif typeName == "char*":
+    isStringVar = true
+  
+  # Build the C declaration
+  var code = ""
+  
   if isArrayVar:
-    if node.varValue != nil and node.varValue.kind == nkArrayLit: 
-      finalCode = typeName & " " & node.varName & "[] = "
-    else: finalCode = typeName & "* " & node.varName & " = "
-  elif isStringVar: finalCode = "char* " & node.varName & " = "
-  elif isEnumVar: finalCode = typeName & " " & node.varName & " = "
-  else: finalCode = typeName & " " & node.varName & " = "
-
-  if node.varValue != nil: finalCode &= generateExpression(node.varValue)
+    if node.varValue != nil and node.varValue.kind == nkArrayLit:
+      code = typeName & " " & node.varName & "[] = "
+    else:
+      code = typeName & "* " & node.varName & " = "
+  elif isStringVar:
+    code = "char* " & node.varName & " = "
+  elif isEnumVar:
+    code = typeName & " " & node.varName & " = "
   else:
-    if isStringVar or typeName == "char*": finalCode &= "NULL"
-    elif typeName in ["int", "long", "short", "size_t"]: finalCode &= "0"
-    elif typeName in ["float", "double"]: finalCode &= "0.0"
-    elif typeName == "bool": finalCode &= "false"
-    else: finalCode &= "NULL" 
-
-  finalCode &= ";\n"
-  return indentLine(finalCode, context)
+    code = typeName & " " & node.varName & " = "
+  
+  # Add initialization value or default
+  if node.varValue != nil:
+    code &= generateExpression(node.varValue)
+  else:
+    # Default values based on type
+    if isStringVar or typeName == "char*":
+      code &= "NULL"
+    elif typeName in ["int", "long", "short", "size_t"]:
+      code &= "0"
+    elif typeName in ["float", "double"]:
+      code &= "0.0"
+    elif typeName == "bool":
+      code &= "false"
+    else:
+      code &= "NULL"
+  
+  code &= ";\n"
+  
+  # Mark as RC variable if needed
+  if isReferenceCountedType(typeName):
+    rcVariables[node.varName] = true
+  
+  return indentLine(code, context)
 
 # =========================== ENUM GENERATORS ============================
 proc generateEnum(node: Node): string {.used.} =
@@ -1085,65 +1151,150 @@ proc generateIndexExpr(node: Node): string =
 
 # ============================ ARRAY GENERATORS =============================
 proc generateArrayLiteral(node: Node): string =
+  # Helper functions
+  proc isNestedArray(n: Node): bool =
+    n.elements.len > 0 and (n.elements[0].kind == nkArrayLit or n.elements[0].kind == nkArenaArrayLit)
   
+  proc getElementType(elem: Node): string =
+    case elem.kind
+    of nkStringLit: "char*"
+    of nkLiteral:
+      let val = elem.literalValue
+      if val.contains('.') or val.contains('e') or val.contains('E'): "double"
+      else: "int"
+    else: "int"
+  
+  proc getInnermostElementType(arr: Node): string =
+    if arr.elements.len == 0: "int"
+    else: getElementType(arr.elements[0])
+  
+  # Main logic
   let isArenaArray = (node.kind == nkArenaArrayLit)
+  let isEmpty = (node.elements.len == 0)
+  let isMatrix = not isEmpty and isNestedArray(node)
   
-  if node.elements.len == 0: 
-    if isArenaArray:
-      let elemType = "int"  # or whatever default
-      return "({\n    " & elemType & "* _tmp = (" & elemType & "*)arena_alloc_array(&global_arena, sizeof(" & elemType & "), 1);\n    _tmp;\n})"
-    else:
-      return "rc_new_array(int, 0)"
-  
-  var elemType = "int"
-  if node.elements.len > 0:
-    let firstElem = node.elements[0]
-    case firstElem.kind
-    of nkStringLit:
-      elemType = "char*"
-    elif firstElem.kind == nkLiteral:
-      if firstElem.literalValue.contains('.') or 
-         firstElem.literalValue.contains('e') or 
-         firstElem.literalValue.contains('E'):
-        elemType = "double"
+  if isEmpty:
+    if isMatrix:
+      if isArenaArray:
+        return "({\n    int** _tmp = (int**)arena_alloc_array(&global_arena, sizeof(int*), 0);\n    _tmp;\n})"
       else:
-        elemType = "int"
+        return "rc_new_array(int*, 0)"
     else:
-      elemType = "int"
+      if isArenaArray:
+        return "({\n    int* _tmp = (int*)arena_alloc_array(&global_arena, sizeof(int), 0);\n    _tmp;\n})"
+      else:
+        return "rc_new_array(int, 0)"
   
-  if isArenaArray:
-    var code = "({\n"
-    code &= "    " & elemType & "* _tmp = (" & elemType & "*)arena_alloc_array(&global_arena, sizeof(" & 
-            elemType & "), " & $node.elements.len & ");\n"
-    
-    if node.elements.len > 0:
-      code &= "    if (_tmp) {\n"
+  # Determine types
+  let baseType = 
+    if isMatrix:
+      let firstRow = node.elements[0]
+      let innerType = getInnermostElementType(firstRow)
+      if innerType == "char*": "char***"
+      elif innerType == "double": "double**"
+      else: "int**"
+    else:
+      let elemType = getElementType(node.elements[0])
+      if elemType == "char*": "char**"
+      elif elemType == "double": "double*"
+      else: "int*"
+  
+  # For code generation
+  proc generateFlatArray(): string =
+    if isArenaArray:
+      let base = if baseType.endsWith("*"): baseType[0..^2] else: baseType
+      var code = "({\n    " & baseType & " _tmp = (" & baseType & ")arena_alloc_array(&global_arena, sizeof(" & 
+                 base & "), " & $node.elements.len & ");\n"
+      if node.elements.len > 0:
+        code &= "    if (_tmp) {\n"
+        for i, elem in node.elements:
+          if elem.kind == nkStringLit:
+            code &= "        _tmp[" & $i & "] = arena_string_new(&global_arena, \"" & 
+                    escapeString(elem.literalValue) & "\");\n"
+          else:
+            let val = generateExpression(elem)
+            code &= "        _tmp[" & $i & "] = " & val & ";\n"
+        code &= "    }\n"
+      code &= "    _tmp;\n})"
+      return code
+    else:
+      let base = if baseType.endsWith("*"): baseType[0..^2] else: baseType
+      var code = "({\n    " & baseType & " _tmp = rc_new_array(" & base & ", " & $node.elements.len & ");\n"
       for i, elem in node.elements:
         if elem.kind == nkStringLit:
-          code &= "        _tmp[" & $i & "] = arena_string_new(&global_arena, \"" & 
-                  escapeString(elem.literalValue) & "\");\n"
+          code &= "    _tmp[" & $i & "] = rc_string_new(\"" & escapeString(elem.literalValue) & "\");\n"
         else:
           let val = generateExpression(elem)
-          code &= "        _tmp[" & $i & "] = " & val & ";\n"
-      code &= "    }\n"
-    
-    code &= "    _tmp;\n"
-    code &= "})"
-    return code
-  else:
-    var code = "({\n"
-    code &= "    " & elemType & "* _tmp = rc_new_array(" & elemType & ", " & $node.elements.len & ");\n"
-    
-    for i, elem in node.elements:
-      if elem.kind == nkStringLit:
-        code &= "    _tmp[" & $i & "] = rc_string_new(\"" & escapeString(elem.literalValue) & "\");\n"
-      else:
-        let val = generateExpression(elem)
-        code &= "    _tmp[" & $i & "] = " & val & ";\n"
-    
-    code &= "    _tmp;\n"
-    code &= "})"
-    return code
+          code &= "    _tmp[" & $i & "] = " & val & ";\n"
+      code &= "    _tmp;\n})"
+      return code
+  
+  proc generateMatrix(): string =
+    if isArenaArray:
+      let base = 
+        if baseType.endsWith("***"): baseType[0..^4]
+        elif baseType.endsWith("**"): baseType[0..^3]
+        else: baseType
+      
+      var code = "({\n    " & baseType & " _tmp = (" & baseType & ")arena_alloc_array(&global_arena, sizeof(" & 
+                 base & "*), " & $node.elements.len & ");\n"
+      code &= "    if (_tmp) {\n"
+      
+      for i, row in node.elements:
+        if row.kind == nkArrayLit or row.kind == nkArenaArrayLit:
+          let rowSize = row.elements.len
+          let rowType = 
+            if baseType == "char***": "char**"
+            elif baseType == "double**": "double*"
+            else: "int*"
+          
+          code &= "        _tmp[" & $i & "] = (" & rowType & ")arena_alloc_array(&global_arena, sizeof(" & 
+                  base & "), " & $rowSize & ");\n"
+          code &= "        if (_tmp[" & $i & "]) {\n"
+          
+          for j, elem in row.elements:
+            if elem.kind == nkStringLit:
+              code &= "            _tmp[" & $i & "][" & $j & "] = arena_string_new(&global_arena, \"" & 
+                      escapeString(elem.literalValue) & "\");\n"
+            else:
+              let val = generateExpression(elem)
+              code &= "            _tmp[" & $i & "][" & $j & "] = " & val & ";\n"
+          
+          code &= "        }\n"
+      
+      code &= "    }\n    _tmp;\n})"
+      return code
+    else:
+      # RC array matrix
+      let outerSize = node.elements.len
+      let outerType = 
+        if baseType == "char***": "char**"
+        elif baseType == "double**": "double*"
+        else: "int*"
+      
+      var code = "({\n    " & baseType & " _tmp = rc_new_array(" & outerType & ", " & $outerSize & ");\n"
+      
+      for i, row in node.elements:
+        if row.kind == nkArrayLit or row.kind == nkArenaArrayLit:
+          let rowSize = row.elements.len
+          let innerType = getInnermostElementType(row)
+          
+          code &= "    _tmp[" & $i & "] = rc_new_array(" & innerType & ", " & $rowSize & ");\n"
+          
+          for j, elem in row.elements:
+            if elem.kind == nkStringLit:
+              code &= "    _tmp[" & $i & "][" & $j & "] = rc_string_new(\"" & 
+                      escapeString(elem.literalValue) & "\");\n"
+            else:
+              let val = generateExpression(elem)
+              code &= "    _tmp[" & $i & "][" & $j & "] = " & val & ";\n"
+      
+      code &= "    _tmp;\n})"
+      return code
+  
+  # Generate the appropriate array
+  if isMatrix: generateMatrix()
+  else: generateFlatArray()
 
 # ============================== IF GENERATORS ================================
 proc generateIf(node: Node, context: CodegenContext): string =

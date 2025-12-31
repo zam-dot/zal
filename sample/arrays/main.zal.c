@@ -168,6 +168,14 @@ int main() {
     for (int i = 0; i <= 4; i++) {
         printf("Value %d \n", arr[i]);
     }
+    int *newarr = rc_new_array(int, 1);
+    newarr[0] = 3;
+    for (int i = 0; i <= 4; i++) {
+        printf("Value %d \n", newarr[i]);
+    }
+
+    // Block scope cleanup
+    if (newarr) rc_release(newarr);
     // Clean up arena
     arena_free(&global_arena);
     return 0;

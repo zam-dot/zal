@@ -11,7 +11,4 @@ func main() {
     print("1 + 1 = %d\n", 1+1)
     print("7.0/3.0 = %f\n", 7.0/3.0)
 
-    print(true && false)
-    print(true || false)
-    print(!true)
 }

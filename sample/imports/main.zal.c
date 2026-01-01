@@ -102,6 +102,5 @@ static inline void rc_weak_release(void *ptr) {
 double square(double x) { return x * x; }
 int    main() {
     printf("PI = %f\n", PI);
-    printf("Square of 5 = %f\n", square(5.0));
     return 0;
 }

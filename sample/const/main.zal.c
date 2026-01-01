@@ -106,6 +106,5 @@ int main() {
     printf("%d\n", n);
     double d = 3e20 / n;
     printf("%lf\n", d);
-    printf("%f\n", sin(d));
     return 0;
 }

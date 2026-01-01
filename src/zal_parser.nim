@@ -551,9 +551,30 @@ proc parseCallExpr(p: Parser): Node =
 proc parsePrimary(p: Parser): Node =
   case p.current.kind
   of tkIdent:
+    # Save position in case we need to reparse as struct literal
+    let savedPos = p.pos
+    let savedToken = p.current
+    
+    # Try to parse as identifier
     let baseNode = parseIdentifier(p)
-    if baseNode == nil: return nil
-
+    if baseNode == nil: 
+      return nil
+    
+    # Check if next token is '{' - indicating a struct literal
+    if p.current.kind == tkLBrace:
+      # This is a struct literal! Rewind and parse it properly
+      p.pos = savedPos
+      p.current = savedToken
+      
+      # Parse type name
+      let typeNameNode = parseIdentifier(p)
+      if typeNameNode == nil:
+        return nil
+      
+      # Parse the struct literal
+      return parseStructLiteral(p, typeNameNode.identName)
+    
+    # Not a struct literal, continue with normal parsing
     var currentNode = baseNode
     
     # Handle field access and index expressions
@@ -579,6 +600,29 @@ proc parsePrimary(p: Parser): Node =
     return currentNode
   
   of tkPrint, tkGetMem, tkFreeMem, tkLen, tkAlloc:
+    if p.peek(1).kind == tkLParen:
+      # It's a function call
+      return parseCallExpr(p)
+    
+    # If next token is '{', it might be a struct literal for a type with that name
+    if p.peek(1).kind == tkLBrace:
+      let savedPos = p.pos
+      let typeName = p.current.lexeme
+      p.advance()  # Move past the identifier
+      
+      let structLit = parseStructLiteral(p, typeName)
+      if structLit != nil:
+        return structLit
+      
+      # If not a struct literal, rewind
+      p.pos = savedPos
+      p.current = p.tokens[savedPos]
+      return parseIdentifier(p)
+    
+    # Otherwise parse as normal identifier
+    let baseNode = parseIdentifier(p)
+    if baseNode == nil: return nil
+
     if p.peek(1).kind == tkLParen:
       if p.current.lexeme == "String" and p.peek(1).kind == tkLParen:
         let line = p.current.line
@@ -634,9 +678,6 @@ proc parsePrimary(p: Parser): Node =
       
       p.pos = savedPos
       p.current = p.tokens[savedPos]
-
-    let baseNode = parseIdentifier(p)
-    if baseNode == nil: return nil
 
     var currentNode = baseNode
     while p.current.kind == tkDot:
@@ -1479,12 +1520,27 @@ proc parseStructLiteral(p: Parser, structName: string): Node =
     line = p.current.line
     col = p.current.col
   
-  if not p.expect(tkLBrace): return nil
+  if not p.expect(tkLBrace): 
+    echo "DEBUG: Expected '{' for struct literal, got ", p.current.kind
+    return nil
+  
   var fieldValues: seq[Node] = @[]
   
   while p.current.kind != tkRBrace and p.current.kind != tkEOF:
     let fieldName = p.parseIdentifier()
-    if fieldName == nil: return nil
+    if fieldName == nil: 
+      # Skip commas or semicolons
+      if p.current.kind == tkComma:
+        p.advance()
+        continue
+      elif p.current.kind == tkSemicolon:
+        p.advance()
+        continue
+      else:
+        echo "DEBUG: Expected field name in struct literal"
+        break
+    
+    # Check for ':' or '='
     if p.current.kind == tkColon:
       p.advance()
     elif p.current.kind == tkAssign:
@@ -1493,20 +1549,43 @@ proc parseStructLiteral(p: Parser, structName: string): Node =
       echo "Error: Expected ':' or '=' after field name at line ", p.current.line
       return nil
     
-    let value = parseExpression(p)
+    # Parse the value
+    var value: Node = nil
+    
+    # Check if this is a nested struct literal
+    if p.current.kind == tkIdent and p.peek(1).kind == tkLBrace:
+      let savedPos = p.pos
+      let nestedTypeName = p.current.lexeme
+      p.advance()  # Move past type name
+      
+      let nestedStruct = parseStructLiteral(p, nestedTypeName)
+      if nestedStruct != nil:
+        value = nestedStruct
+      else:
+        # Rewind and parse as regular expression
+        p.pos = savedPos
+        p.current = p.tokens[savedPos]
+        value = parseExpression(p)
+    else:
+      value = parseExpression(p)
+    
     if value == nil:
+      echo "Error: Could not parse value for field ", fieldName.identName
       return nil
     
     let assignment = Node(kind: nkBinaryExpr, line: fieldName.line, col: fieldName.col,
-      nodeKind: nkBinaryExpr, left: fieldName, right: value, op: ":")
+      nodeKind: nkBinaryExpr, left: fieldName, right: value, op: "=")
     fieldValues.add(assignment)
     
+    # Optional comma separator
     if p.expect(tkComma): discard
     elif p.current.kind != tkRBrace:
-      if p.current.kind == tkIdent: continue
-      else: break
+      # Allow implicit field separation without comma
+      continue
   
-  if not p.expect(tkRBrace): return nil
+  if not p.expect(tkRBrace): 
+    echo "Error: Expected '}' at end of struct literal at line ", line
+    return nil
   
   return Node(kind: nkStructLiteral, line: line, col: col, nodeKind: nkStructLiteral,
     structType: structName, fieldValues: fieldValues)

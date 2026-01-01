@@ -701,7 +701,20 @@ proc inferTypeFromExpression(node: Node): string =
 
 # =========================== VARIABLE DECLARATION ============================
 proc generateVarDecl(node: Node, context: CodegenContext): string =
-# ==================== SECTION 1: ARENA ARRAYS ====================
+  # ==================== SECTION 1: STRUCT LITERALS ====================
+  # Handle struct literals first
+  if node.varValue != nil and node.varValue.kind == nkStructLiteral:
+    var typeName = node.varType
+    if typeName.len == 0:
+      # Type inference for := syntax
+      typeName = node.varValue.structType
+    
+    # Generate struct initialization
+    var code = typeName & " " & node.varName & " = " & 
+               generateStructLiteral(node.varValue) & ";\n"
+    return indentLine(code, context)
+  
+  # ==================== SECTION 2: ARENA ARRAYS ====================
   # @arena(size) arr = {1, 2, 3} or @arena arr = {1, 2, 3}
   if node.varValue != nil and node.varValue.kind == nkArenaArrayLit:
     if context == cgGlobal:
@@ -1402,15 +1415,22 @@ proc generateStruct(node: Node): string {.used.} =
 
 # ============================ STRUCT LITERAL GENERATORS ======================
 proc generateStructLiteral(node: Node): string =
-  if node.fieldValues.len == 1:
-    let assignment = node.fieldValues[0]
-    if assignment.left.identName == "value": return generateExpression(assignment.right)
+  if node.fieldValues.len == 1 and node.fieldValues[0].left.identName == "value":
+    # Handle simple value case
+    return generateExpression(node.fieldValues[0].right)
+  
   var 
-    resultStruct = "{"
+    resultStruct = "{"  # Start C struct literal
     initializers: seq[string]
+  
   for assignment in node.fieldValues:
-    initializers.add("." & assignment.left.identName & " = " & 
-    generateExpression(assignment.right))
+    let 
+      fieldName = assignment.left.identName
+      # Generate value - this handles nested structs recursively
+      fieldValue = generateExpression(assignment.right)
+    
+    initializers.add("." & fieldName & " = " & fieldValue)
+  
   resultStruct.add(initializers.join(", "))
   resultStruct.add("}")
   return resultStruct
@@ -1784,6 +1804,7 @@ proc generateProgram(node: Node): string =
     result &= "}\n"
   
   return result
+
 # =========================== MAIN DISPATCH ============================
 proc generateC*(node: Node, context: string = "global"): string =
   let cgContext =

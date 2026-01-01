@@ -112,19 +112,16 @@ void simpleTest() {
     // Block scope cleanup
     if (s) rc_release(s);
     if (a) rc_release(a);
-    if (sa) rc_release_array(sa, (void (*)(void *))rc_release);
+    if (sa) {
+        for (size_t _i = 0; _i < RC_GET_HEADER(sa)->array_count; _i++) {
+            if (sa[_i]) rc_release(sa[_i]);
+        }
+        rc_release(sa);
+    }
 }
 void nestingTest() {
     char *s = rc_string_new("outer");
-    if (true) {
-        char **tmp = rc_new_array(char *, 2);
-        tmp[0] = rc_string_new("inner1");
-        tmp[1] = rc_string_new("inner2");
-        printf("%s\n", tmp[0]);
-        // Block scope cleanup
-        if (tmp) rc_release_array(tmp, (void (*)(void *))rc_release);
-    }
-    printf("%s\n", s);
+    printf("%s\n", tmp[0]);
 
     // Block scope cleanup
     if (s) rc_release(s);

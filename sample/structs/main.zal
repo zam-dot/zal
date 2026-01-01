@@ -14,23 +14,26 @@ struct Employee {
 }
 
 func main() {
+    p := Person{
+        id: 1001,
+        age: 30
+    }
+    
     emp := Employee{
-        person: Person{
-            id: 1001,
-            age: 30
-        },
+        person: p,
         salary: 75000.0,
         department: "Engineering"
     }
     
-    print("Employee %d:\n", emp.person.id)
-    print("  Age: %d\n", emp.person.age)
-    print("  Salary: $%.2f\n", emp.salary)
-    print("  Dept: %s\n", emp.department)
-    
-    emp.person.age = 31
-    emp.salary = 80000.0
-    
-    print("After raise: %d years old, $%.2f\n", 
-           emp.person.age, emp.salary)
+    emp2 := Employee{
+        person: Person{
+            id: 1002,
+            age: 35
+        },
+        salary: 80000.0,
+        department: "Management"
+    }
+
+    print("%.2f %s\n", emp.salary, emp.department)
+    print("%.2f %s\n", emp2.salary, emp2.department)
 }

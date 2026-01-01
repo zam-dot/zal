@@ -99,35 +99,67 @@ static inline void rc_weak_release(void *ptr) {
 
 #ifndef ARENA_H
 #define ARENA_H
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 typedef struct {
     uint8_t *buffer;
     size_t   offset;
     size_t   capacity;
 } Arena;
-static inline void *arena_alloc(Arena *a, size_t size) {
-    if (size == 0) return NULL; // Don't allocate 0 bytes
 
-    size_t aligned_size = (size + 7) & ~7; // Align to 8 bytes
+typedef struct {
+    size_t size; // Store array size!
+} ArenaArrayHeader;
+
+#define ARENA_ARRAY_HEADER_SIZE sizeof(ArenaArrayHeader)
+#define ARENA_GET_HEADER(ptr) ((ArenaArrayHeader *)((char *)(ptr) - ARENA_ARRAY_HEADER_SIZE))
+
+static inline void *arena_alloc_with_size(Arena *a, size_t size, size_t array_size) {
+    if (size == 0) return NULL;
+
+    size_t total_size = ARENA_ARRAY_HEADER_SIZE + size;
+    size_t aligned_size = (total_size + 7) & ~7;
+
     if (a->offset + aligned_size <= a->capacity) {
-        void *ptr = &a->buffer[a->offset];
+        void             *ptr = &a->buffer[a->offset + ARENA_ARRAY_HEADER_SIZE];
+        ArenaArrayHeader *header = (ArenaArrayHeader *)&a->buffer[a->offset];
+        header->size = array_size;
         a->offset += aligned_size;
         return ptr;
     }
-    return NULL; // Out of memory
+    return NULL;
 }
-static inline void  arena_reset(Arena *a) { a->offset = 0; }
-static inline void *arena_alloc_array(Arena *a, size_t elem_size, size_t count) {
+
+static inline void *arena_alloc_array_with_size(Arena *a, size_t elem_size, size_t count) {
     size_t total_size = elem_size * count;
-    void  *ptr = arena_alloc(a, total_size);
+    void  *ptr = arena_alloc_with_size(a, total_size, count);
     if (ptr) {
         memset(ptr, 0, total_size);
     }
     return ptr;
 }
+
+static inline size_t arena_array_len(void *ptr) {
+    if (!ptr) return 0;
+    return ARENA_GET_HEADER(ptr)->size;
+}
+
+// Keep old functions for backward compatibility
+static inline void *arena_alloc(Arena *a, size_t size) { return arena_alloc_with_size(a, size, 0); }
+
+static inline void *arena_alloc_array(Arena *a, size_t elem_size, size_t count) {
+    return arena_alloc_array_with_size(a, elem_size, count);
+}
+
+static inline void  arena_reset(Arena *a) { a->offset = 0; }
 static inline char *arena_string_new(Arena *a, const char *str) {
     if (!str) return NULL;
     size_t len = strlen(str);
-    char  *result = (char *)arena_alloc(a, len + 1);
+    char  *result = (char *)arena_alloc_with_size(a, len + 1, len + 1);
     if (result) {
         strcpy(result, str);
     }
@@ -160,11 +192,11 @@ static Arena global_arena;
 int main() {
     // Initialize arena
     global_arena = arena_init_dynamic(1048576);
-    double *weights = (double *)arena_alloc_array(&global_arena, sizeof(double), 3);
+    double *weights = (double *)arena_alloc_array_with_size(&global_arena, sizeof(double), 3);
     weights[0] = 1.32;
     weights[1] = 4.12;
     weights[2] = 3.42;
-    for (int i = 0; i <= 2; i++) {
+    for (int i = 0; i <= arena_array_len(weights) - 1; i++) {
         printf("%.2f\n", weights[i]);
     }
     // Clean up arena

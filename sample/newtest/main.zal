@@ -1,57 +1,59 @@
 @c { #include <stdio.h> }
 
+
 struct Person {
-    id: int,
-    age: int,
+    id: int
+    age: int
 }
 
 struct Employee {
-    person: Person,
-    salary: float,
-    department: string,
+    person: Person  
+    salary: float
+    department: string
 }
 
-enum Colors {
-    RED,
-    GREEN,
-}
-
-const PI = 3.14159
-
-func loop() {
-        i := 1
-    for i <= 3 {
-        print("first loop: %d\n", i)
-        i = i + 1
-    }
-    
-     for j in 1..3 {
-         print("second loop: %d\n", j)
-     }
-
-   for n in 0..6 {
-       if n == 0 {
-           print("third...\n")
-       }
-       print("third loop: %d\n", n)
-   }
-
-}
+// enum Colors {
+//     RED,
+//     GREEN,
+// }
+//
+// const PI = 3.14159
+//
+// func loop() {
+//         i := 1
+//     for i <= 3 {
+//         print("first loop: %d\n", i)
+//         i = i + 1
+//     }
+//
+//      for j in 1..3 {
+//          print("second loop: %d\n", j)
+//      }
+//
+//    for n in 0..6 {
+//        if n == 0 {
+//            print("third...\n")
+//        }
+//        print("third loop: %d\n", n)
+//    }
+//
+// }
 
 func main() {
-    str := "hello world"
-    print("%s\n", str)
+    // str := "hello world"
+    // print("%s\n", str)
+    //
+    // arr := {1, 2, 3, 4, 5}
+    // for i in len(arr)-1 {
+    //     print("%d\n", i)
+    // }
+    //
+    // print("%d\n", GREEN)
+    // const MAX_SIZE = 100
+    // print("%d\n", MAX_SIZE)
 
-    arr := [1, 2, 3, 4, 5]
-    for i in arr {
-        print("%d\n", i)
-    }
 
-    print("%d\n", GREEN)
-    const MAX_SIZE = 100
-    print("%d\n", MAX_SIZE)
-
-    tei := Employee{
+    emp := Employee{
         person: Person{
             id: 1001,
             age: 30
@@ -59,22 +61,23 @@ func main() {
         salary: 75000.0,
         department: "Engineering"
     }
-    print("Employee %d:\n",  tei.person.id)
-    print("Age: %d\n",       tei.person.age)
-    print("Salary: $%.2f\n", tei.salary)
-    print("Dept: %s\n",      tei.department)
+    
+    print("Employee %d:\n", emp.person.id)
+    print("  Age: %d\n", emp.person.age)
+    print("  Salary: $%.2f\n", emp.salary)
+    print("  Dept: %s\n", emp.department)
 
-    @arena xx = [10, 20, 30, 40, 50]
-    for i in 0..4 {
-        print("%d\n", i)
-    }
+    // @arena xx = {10, 20, 30, 40, 50}
+    // for i in 0..len(xx)-1 {
+    //     print("%d\n", i)
+    // }
 
-    i := 100
-
-    switch (i) {
-        case 0, 2, 4, 5: print("7 is even\n")
-        case 1:          print("7 is odd\n")
-        default:         print("shit\n")
-    }
+    // i := 100
+    //
+    // switch (i) {
+    //     case 0, 2, 4, 5: print("7 is even\n")
+    //     case 1:          print("7 is odd\n")
+    //     default:         print("shit\n")
+    // }
 
 }

@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #ifndef ZAL_ARENA_H
 #define ZAL_ARENA_H
@@ -96,86 +97,23 @@ static inline void rc_weak_release(void *ptr) {
 #endif
 
 
-#ifndef ARENA_H
-#define ARENA_H
 typedef struct {
-    uint8_t *buffer;
-    size_t   offset;
-    size_t   capacity;
-} Arena;
-static inline void *arena_alloc(Arena *a, size_t size) {
-    if (size == 0) return NULL; // Don't allocate 0 bytes
+    int id;
+    int age;
+} Person;
 
-    size_t aligned_size = (size + 7) & ~7; // Align to 8 bytes
-    if (a->offset + aligned_size <= a->capacity) {
-        void *ptr = &a->buffer[a->offset];
-        a->offset += aligned_size;
-        return ptr;
-    }
-    return NULL; // Out of memory
-}
-static inline void  arena_reset(Arena *a) { a->offset = 0; }
-static inline void *arena_alloc_array(Arena *a, size_t elem_size, size_t count) {
-    size_t total_size = elem_size * count;
-    void  *ptr = arena_alloc(a, total_size);
-    if (ptr) {
-        memset(ptr, 0, total_size);
-    }
-    return ptr;
-}
-static inline char *arena_string_new(Arena *a, const char *str) {
-    if (!str) return NULL;
-    size_t len = strlen(str);
-    char  *result = (char *)arena_alloc(a, len + 1);
-    if (result) {
-        strcpy(result, str);
-    }
-    return result;
-}
-static inline Arena arena_init_dynamic(size_t capacity) {
-    uint8_t *buffer = (uint8_t *)calloc(1, capacity);
-    if (!buffer) {
-        fprintf(stderr, "ERROR: Failed to allocate %zu bytes for arena\n", capacity);
-        exit(1);
-    }
-    return (Arena){.buffer = buffer, .offset = 0, .capacity = capacity};
-}
-static inline void arena_free(Arena *a) {
-    if (a->buffer) {
-        free(a->buffer);
-        a->buffer = NULL;
-    }
-    a->capacity = 0;
-    a->offset = 0;
-}
-static inline Arena arena_init(void *backing_buffer, size_t capacity) {
-    return (Arena){.buffer = (uint8_t *)backing_buffer, .offset = 0, .capacity = capacity};
-}
-#endif
-
-
-static Arena global_arena;
+typedef struct {
+    Person person;
+    double salary;
+    char  *department;
+} Employee;
 
 int main() {
-    // Initialize arena
-    global_arena = arena_init_dynamic(262144);
-    int **matrix = (int **)arena_alloc_array(&global_arena, sizeof(int *), 2);
-    matrix[0] = (int *)arena_alloc_array(&global_arena, sizeof(int), 3);
-    matrix[0][0] = 1;
-    matrix[0][1] = 4;
-    matrix[0][2] = 2;
-    matrix[1] = (int *)arena_alloc_array(&global_arena, sizeof(int), 3);
-    matrix[1][0] = 3;
-    matrix[1][1] = 6;
-    matrix[1][2] = 8;
-    printf("matrix:\n");
-    for (int i = 0; i <= 1; i++) {
-        for (int j = 0; j <= 2; j++) {
-            printf("%d ", matrix[i][j]);
-        }
-        printf("\n");
-    }
-    // Clean up arena
-    arena_free(&global_arena);
+    Person   p = {.id = 1001, .age = 30};
+    Employee emp = {.person = p, .salary = 75000.0, .department = "Engineering"};
+    Employee emp2 = {
+        .person = {.id = 1002, .age = 35}, .salary = 80000.0, .department = "Management"};
+    printf("%.2f %s\n", emp.salary, emp.department);
+    printf("%.2f %s\n", emp2.salary, emp2.department);
     return 0;
 }

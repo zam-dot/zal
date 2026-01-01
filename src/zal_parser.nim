@@ -179,13 +179,13 @@ type Parser* = ref object
 proc getPrecedence(kind: TokenKind): int =
   case kind
   of tkAssign, tkColonAssign: 1
+  of tkDotDot: 1
   of tkOr: 2
   of tkAnd: 3
   of tkEq, tkNe: 4
   of tkLt, tkGt, tkLe, tkGe: 5
   of tkPlus, tkMinus: 6
   of tkStar, tkSlash, tkModulus: 7
-  of tkDotDot: 8
   else: 0
 
 # =========================== FORWARD DECLARATIONS ============================

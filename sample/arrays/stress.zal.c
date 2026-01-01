@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #ifndef ZAL_ARENA_H
 #define ZAL_ARENA_H
@@ -188,60 +189,38 @@ static inline Arena arena_init(void *backing_buffer, size_t capacity) {
 
 static Arena global_arena;
 
+void stress_test() {
+    printf("Starting Arena stress test...\n");
+    for (int k = 0; k <= 10000; k++) {
+        int **temp_matrix = (int **)arena_alloc_array(&global_arena, sizeof(int *), 3);
+        temp_matrix[0] = (int *)arena_alloc_array(&global_arena, sizeof(int), 3);
+        temp_matrix[0][0] = k;
+        temp_matrix[0][1] = k + 1;
+        temp_matrix[0][2] = k + 2;
+        temp_matrix[1] = (int *)arena_alloc_array(&global_arena, sizeof(int), 3);
+        temp_matrix[1][0] = k + 3;
+        temp_matrix[1][1] = k + 4;
+        temp_matrix[1][2] = k + 5;
+        temp_matrix[2] = (int *)arena_alloc_array(&global_arena, sizeof(int), 3);
+        temp_matrix[2][0] = k + 6;
+        temp_matrix[2][1] = k + 7;
+        temp_matrix[2][2] = k + 8;
+        int sum = 0;
+        for (int i = 0; i <= arena_array_len(temp_matrix) - 1; i++) {
+            for (int j = 0; j <= RC_GET_HEADER(temp_matrix[i])->array_count - 1; j++) {
+                sum = sum + temp_matrix[i][j];
+            }
+        }
+        if (k % 1000 == 0) {
+            printf("Processed %d matrices...\n", k);
+        }
+    }
+    printf("Test complete. Check your system monitor!\n");
+}
 int main() {
     // Initialize arena
-    global_arena = arena_init_dynamic(262144);
-    int *rc_arr = rc_new_array(int, 5);
-    rc_arr[0] = 1;
-    rc_arr[1] = 2;
-    rc_arr[2] = 3;
-    rc_arr[3] = 4;
-    rc_arr[4] = 5;
-    for (int i = 0; i <= RC_GET_HEADER(rc_arr)->array_count - 1; i++) {
-        printf("%d ", rc_arr[i]);
-    }
-    printf("\n");
-    int **arena_matrix = (int **)arena_alloc_array(&global_arena, sizeof(int *), 2);
-    arena_matrix[0] = (int *)arena_alloc_array(&global_arena, sizeof(int), 2);
-    arena_matrix[0][0] = 7;
-    arena_matrix[0][1] = 8;
-    arena_matrix[1] = (int *)arena_alloc_array(&global_arena, sizeof(int), 2);
-    arena_matrix[1][0] = 9;
-    arena_matrix[1][1] = 10;
-    for (int i = 0; i <= arena_array_len(arena_matrix) - 1; i++) {
-        for (int j = 0; j <= RC_GET_HEADER(arena_matrix[i])->array_count - 1; j++) {
-            printf("%d ", arena_matrix[i][j]);
-        }
-        printf("\n");
-    }
-    int **rc_matrix = ({
-        int **_tmp = rc_new_array(int *, 3);
-        _tmp[0] = rc_new_array(int, 2);
-        _tmp[0][0] = 1;
-        _tmp[0][1] = 2;
-        _tmp[1] = rc_new_array(int, 2);
-        _tmp[1][0] = 3;
-        _tmp[1][1] = 4;
-        _tmp[2] = rc_new_array(int, 2);
-        _tmp[2][0] = 5;
-        _tmp[2][1] = 6;
-        _tmp;
-    });
-    for (int i = 0; i <= RC_GET_HEADER(rc_matrix)->array_count - 1; i++) {
-        for (int j = 0; j <= RC_GET_HEADER(rc_matrix[i])->array_count - 1; j++) {
-            printf("%d ", rc_matrix[i][j]);
-        }
-        printf("\n");
-    }
-
-    // Block scope cleanup
-    if (rc_arr) rc_release(rc_arr);
-    if (rc_matrix) {
-        for (size_t _i = 0; _i < RC_GET_HEADER(rc_matrix)->array_count; _i++) {
-            if (rc_matrix[_i]) rc_release(rc_matrix[_i]);
-        }
-        rc_release(rc_matrix);
-    }
+    global_arena = arena_init_dynamic(10485760);
+    stress_test();
     // Clean up arena
     arena_free(&global_arena);
     return 0;

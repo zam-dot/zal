@@ -1,0 +1,36 @@
+@c {
+    #include <stdio.h>
+}
+
+func stress_test() {
+    print("Starting Arena stress test...\n")
+    
+    // We run this many times to see if memory usage 
+    // stays flat or explodes.
+    for k in 0..10000 {
+        @arena(10MB) temp_matrix = { 
+            {k, k + 1, k + 2}, 
+            {k + 3, k + 4, k + 5},
+            {k + 6, k + 7, k + 8} 
+        }
+        
+        // Perform a dummy calculation to ensure 
+        // the compiler doesn't optimize the loop away
+        sum := 0
+        for i in 0..len(temp_matrix)-1 {
+            for j in 0..len(temp_matrix[i])-1 {
+                sum = sum + temp_matrix[i][j]
+            }
+        }
+        
+        if k % 1000 == 0 {
+            print("Processed %d matrices...\n", k)
+        }
+    }
+    
+    print("Test complete. Check your system monitor!\n")
+}
+
+func main() {
+    stress_test()
+}

@@ -1,13 +1,30 @@
 @c { #include <stdio.h> }
 
 func main() {
-    @arena(100KB) arr = [1, 2, 33, 4, 5]
-    for i in 0..4 {
-           print("Value %d \n",arr[i])
+    // RC array
+    rc_arr := {1, 2, 3, 4, 5}
+    
+    for i in 0..len(rc_arr)-1 {
+        print("%d ", rc_arr[i])
     }
-
-    newarr := [3][3][1, 2, 3][2, 3, 4]]
-    for i in 0..4 {
-           print("Value %d \n",newarr[i])
+    print("\n")
+    
+    // Arena matrix
+    @arena arena_matrix = { {7, 8}, {9, 10} }
+    
+    for i in 0..len(arena_matrix)-1 {           // rows
+        for j in 0..len(arena_matrix[i])-1 {    // columns in this row
+            print("%d ", arena_matrix[i][j])
+        }
+        print("\n")
+    }
+    
+    rc_matrix := { {1, 2}, {3, 4}, {5, 6} }
+    
+    for i in 0..len(rc_matrix)-1 {           // rows
+        for j in 0..len(rc_matrix[i])-1 {    // columns in this row
+            print("%d ", rc_matrix[i][j])
+        }
+        print("\n")
     }
 }

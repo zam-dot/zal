@@ -108,7 +108,6 @@ const Keywords = {
   "getmem":   tkGetMem,
   "freemem":  tkFreeMem,
   "free":     tkFreeMem,
- # "sizeof":   tkSizeOf,
   "int":      tkIntType,
   "float":    tkFloatType,
   "string":   tkStringType,
@@ -308,10 +307,8 @@ proc scanCBlock(source: string, i: var int, line, col: var int): Token =
   while i < source.len and braceCount > 0:
     cCode.add(source[i])
     
-    if source[i] == '{':
-      inc(braceCount)
-    elif source[i] == '}':
-      dec(braceCount)
+    if source[i] == '{': inc(braceCount)
+    elif source[i] == '}': dec(braceCount)
     
     inc(i)
     inc(col)
@@ -342,27 +339,22 @@ proc lex*(source: string): seq[Token] =
         of 'c': 
           tokens.add(scanCBlock(source, i, line, col))
         of 'a':
-          # Check if it's @arena or @arena(size)
           if i + 5 < source.len and source[i+1..i+5] == "arena":
-            # Look for '('
-            var arenaLength = 6  # "@arena"
-            var j = i + 6
+            var 
+              arenaLength = 6
+              j = i + 6
 
-            while j < source.len and source[j] in {' ', '\t', '\n', '\r'}:
-              inc(j)
+            while j < source.len and source[j] in {' ', '\t', '\n', '\r'}: inc(j)
             
             if j < source.len and source[j] == '(':
-              # Parse until closing paren
-              var parenDepth = 1
-              var k = j + 1
+              var 
+                parenDepth = 1
+                k = j + 1
               while k < source.len and parenDepth > 0:
-                if source[k] == '(':
-                  inc(parenDepth)
-                elif source[k] == ')':
-                  dec(parenDepth)
+                if source[k] == '(': inc(parenDepth)
+                elif source[k] == ')': dec(parenDepth)
                 inc(k)
-              if parenDepth == 0:
-                arenaLength = (k - i)  # Up to and including closing paren
+              if parenDepth == 0: arenaLength = (k - i)
             
             let lexeme = source[i..<i+arenaLength]
             tokens.add(createToken(tkArena, lexeme, line, col))
@@ -464,8 +456,7 @@ proc lex*(source: string): seq[Token] =
         inc(i, 2)
         inc(col, 2)
       else:
-        # CHANGE THIS LINE:
-        tokens.add(createToken(tkAmpersand, "&", line, col))  # Was tkError!
+        tokens.add(createToken(tkAmpersand, "&", line, col)) 
         inc(i)
         inc(col)
     of '|':

@@ -455,8 +455,6 @@ proc generateExpression(node: Node): string =
   of nkAddressOf: result = generateAddressOf(node)
   of nkDeref: result = generateDeref(node)
   of nkGroup: result = "(" & generateExpression(node.groupExpr) & ")"
-  
-  # ADD THESE CASES for reference counting:
   of nkRcNew: result = generateRcNew(node, cgExpression)
   of nkRcInit: result = generateRcInit(node, cgExpression)
   of nkRcRetain: result = generateRcRetain(node, cgExpression)
@@ -724,7 +722,6 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
     
     let arrayNode = node.varValue
     
-    # Check if this is a matrix
     var isMatrix = false
     if arrayNode.elements.len > 0:
       for elem in arrayNode.elements:
@@ -732,20 +729,16 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
           isMatrix = true
           break
     
-    # Parse arena size
     var arenaSizeBytes = maxArenaSize
     if node.varType.startsWith("arena:"):
       let sizeStr = node.varType[6..^1]
       try:
         let sizeNum = parseInt(sizeStr)
         arenaSizeBytes = sizeNum
-        if sizeNum > actualArenaSize:
-          actualArenaSize = sizeNum
-      except:
-        discard
+        if sizeNum > actualArenaSize: actualArenaSize = sizeNum
+      except: discard
     
     if isMatrix:
-      # Matrix in arena: need int** not int*
       var elemType = "int"
       if arrayNode.elements.len > 0:
         let firstRow = arrayNode.elements[0]
@@ -753,19 +746,15 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
            firstRow.elements.len > 0:
           let firstElem = firstRow.elements[0]
           case firstElem.kind
-          of nkStringLit:
-            elemType = "char*"
+          of nkStringLit: elemType = "char*"
           of nkLiteral:
             if firstElem.literalValue.contains('.') or
                firstElem.literalValue.contains('e') or 
                firstElem.literalValue.contains('E'):
               elemType = "double"
-            else:
-              elemType = "int"
-          else:
-            elemType = "int"
+            else: elemType = "int"
+          else: elemType = "int"
       
-      # Generate int** allocation for matrix
       var code = ""
       if elemType == "int":
         code = "int** " & node.varName & " = (int**)arena_alloc_array(&global_arena, sizeof(int*), " & 
@@ -777,7 +766,6 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
         code = "char*** " & node.varName & " = (char***)arena_alloc_array(&global_arena, sizeof(char**), " & 
                $arrayNode.elements.len & ");\n"
       
-      # Allocate and initialize each row
       for i, row in arrayNode.elements:
         if row.kind == nkArrayLit or row.kind == nkArenaArrayLit:
           let rowSize = row.elements.len
@@ -791,7 +779,6 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
             code &= indentLine(node.varName & "[" & $i & "] = (char**)arena_alloc_array(&global_arena, sizeof(char*), " & 
                     $rowSize & ");\n", context)
           
-          # Initialize row elements
           for j, elem in row.elements:
             if elem.kind == nkStringLit:
               code &= indentLine(node.varName & "[" & $i & "][" & $j & "] = arena_string_new(&global_arena, \"" & 
@@ -807,28 +794,22 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
       # ========== FLAT ARENA ARRAY ==========
       let elemCount = arrayNode.elements.len
       
-      # Determine element type
       var elemType = "int"
       if arrayNode.elements.len > 0:
         let firstElem = arrayNode.elements[0]
         case firstElem.kind
-        of nkStringLit:
-          elemType = "char*"
+        of nkStringLit: elemType = "char*"
         of nkLiteral:
           if firstElem.literalValue.contains('.') or
              firstElem.literalValue.contains('e') or 
              firstElem.literalValue.contains('E'):
             elemType = "double"
-          else:
-            elemType = "int"
-        else:
-          elemType = "int"
+          else: elemType = "int"
+        else: elemType = "int"
       
-      # Generate simple arena allocation (NO statement expression!)
       var code = elemType & "* " & node.varName & " = (" & elemType & "*)arena_alloc_array_with_size(&global_arena, sizeof(" & 
            elemType & "), " & $elemCount & ");\n"
       
-      # Initialize elements
       for i, elem in arrayNode.elements:
         case elem.kind
         of nkStringLit:
@@ -845,7 +826,6 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
   if node.varValue != nil and node.varValue.kind == nkArrayLit:
     let arrayNode = node.varValue
     
-    # Check if this is a matrix (nested array)
     var isMatrix = false
     if arrayNode.elements.len > 0:
       for elem in arrayNode.elements:
@@ -854,35 +834,30 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
           break
     
     if isMatrix:
-      # Matrix: int** for int matrix, double** for double, etc.
       let generatedCode = generateArrayLiteral(arrayNode)
       
-      # Infer matrix type from first element
       var inferredType = "int**"
       if arrayNode.elements.len > 0:
         let firstRow = arrayNode.elements[0]
         if firstRow.kind == nkArrayLit and firstRow.elements.len > 0:
           let firstElem = firstRow.elements[0]
           case firstElem.kind
-          of nkStringLit:
-            inferredType = "char***"
+          of nkStringLit: inferredType = "char***"
           of nkLiteral:
             if firstElem.literalValue.contains('.') or 
                firstElem.literalValue.contains('e') or 
                firstElem.literalValue.contains('E'):
               inferredType = "double**"
-            else:
-              inferredType = "int**"
-          else:
-            inferredType = "int**"
+            else: inferredType = "int**"
+          else: inferredType = "int**"
       
       rcVariables[node.varName] = true
       let code = inferredType & " " & node.varName & " = " & generatedCode & ";\n"
       return indentLine(code, context)
     else:
-      # Flat array
-      var elemType = "int"
-      var isStringArray = false
+      var 
+        elemType = "int"
+        isStringArray = false
       
       if arrayNode.elements.len > 0:
         let firstElem = arrayNode.elements[0]
@@ -895,10 +870,8 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
              firstElem.literalValue.contains('e') or 
              firstElem.literalValue.contains('E'):
             elemType = "double"
-          else:
-            elemType = "int"
-        else:
-          elemType = "int"
+          else: elemType = "int"
+        else: elemType = "int"
       
       rcVariables[node.varName] = true
       var code = elemType & "* " & node.varName & " = rc_new_array(" & 
@@ -925,15 +898,11 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
       var typeName = node.varType
       
       if typeName.len == 0:
-        # Try to infer type from alloc() arguments
         if callNode.callFunc == "alloc" and callNode.callArgs.len >= 2:
           let typeArg = callNode.callArgs[0]
-          if typeArg.kind == nkIdentifier:
-            typeName = typeArg.identName & "*"
-          else:
-            typeName = "void*"
-        else:
-          typeName = "void*"
+          if typeArg.kind == nkIdentifier: typeName = typeArg.identName & "*"
+          else: typeName = "void*"
+        else: typeName = "void*"
       
       var code = typeName & " " & node.varName & " = " & 
                  generateCall(callNode, cgExpression) & ";\n"
@@ -944,9 +913,10 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
   # ==================== SECTION 5: MULTI-VARIABLE DECLARATIONS ====================
   # Syntax: a, b := func() or a, b = func()
   if ',' in node.varName:
-    let names = node.varName.split(',')
-    let firstName = names[0].strip()
-    let secondName = names[1].strip()
+    let 
+      names       = node.varName.split(',')
+      firstName   = names[0].strip()
+      secondName  = names[1].strip()
     
     var multiCode = ""
     
@@ -954,9 +924,9 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
       let funcCall = node.varValue
       
       if ',' in node.varType:
-        let types = node.varType.split(',')
-        let firstType = types[0].strip()
-        let secondType = types[1].strip()
+        let types       = node.varType.split(',')
+        let firstType   = types[0].strip()
+        let secondType  = types[1].strip()
         
         multiCode = secondType & " " & secondName & " = NULL;\n"
         multiCode &= firstType & " " & firstName & " = " & 
@@ -981,10 +951,11 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
   # All other cases: int x = 5, double y = 3.14, etc.
   
   # Determine variable type
-  var typeName = node.varType
-  var isEnumVar = false
-  var isStringVar = false
-  var isArrayVar = false
+  var 
+    typeName    = node.varType
+    isEnumVar   = false
+    isStringVar = false
+    isArrayVar  = false
   
   if typeName.len > 0 and typeName[0].isUpperAscii():
     isEnumVar = true
@@ -994,58 +965,41 @@ proc generateVarDecl(node: Node, context: CodegenContext): string =
     if node.varValue.kind == nkStringLit:
       typeName = "char*"
       isStringVar = true
-    elif node.varValue.kind == nkArrayLit:
-      isArrayVar = true
-      # Type inference for array literals already handled above
-    else:
-      typeName = inferTypeFromExpression(node.varValue)
+    elif node.varValue.kind == nkArrayLit: isArrayVar = true
+    else: typeName = inferTypeFromExpression(node.varValue)
   
   # Handle array types
   elif typeName.endsWith("[]"):
     isArrayVar = true
     typeName = typeName[0 ..^ 3]
-  elif typeName.contains("[") and typeName.contains("]"):
-    isArrayVar = true
-  elif typeName == "char*":
-    isStringVar = true
+  elif typeName.contains("[") and typeName.contains("]"): isArrayVar = true
+  elif typeName == "char*": isStringVar = true
   
-  # Build the C declaration
   var code = ""
   
   if isArrayVar:
     if node.varValue != nil and node.varValue.kind == nkArrayLit:
       code = typeName & " " & node.varName & "[] = "
-    else:
-      code = typeName & "* " & node.varName & " = "
-  elif isStringVar:
-    code = "char* " & node.varName & " = "
-  elif isEnumVar:
-    code = typeName & " " & node.varName & " = "
-  else:
-    code = typeName & " " & node.varName & " = "
+    else: code = typeName & "* " & node.varName & " = "
+  elif isStringVar: code = "char* " & node.varName & " = "
+  elif isEnumVar: code = typeName & " " & node.varName & " = "
+  else: code = typeName & " " & node.varName & " = "
   
   # Add initialization value or default
   if node.varValue != nil:
     code &= generateExpression(node.varValue)
   else:
     # Default values based on type
-    if isStringVar or typeName == "char*":
-      code &= "NULL"
-    elif typeName in ["int", "long", "short", "size_t"]:
-      code &= "0"
-    elif typeName in ["float", "double"]:
-      code &= "0.0"
-    elif typeName == "bool":
-      code &= "false"
-    else:
-      code &= "NULL"
+    if isStringVar or typeName == "char*": code &= "NULL"
+    elif typeName in ["int", "long", "short", "size_t"]: code &= "0"
+    elif typeName in ["float", "double"]: code &= "0.0"
+    elif typeName == "bool": code &= "false"
+    else: code &= "NULL"
   
   code &= ";\n"
   
   # Mark as RC variable if needed
-  if isReferenceCountedType(typeName):
-    rcVariables[node.varName] = true
-  
+  if isReferenceCountedType(typeName): rcVariables[node.varName] = true
   return indentLine(code, context)
 
 # =========================== ENUM GENERATORS ============================
@@ -1107,9 +1061,9 @@ proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): s
       of nkLiteral, nkStringLit: typeName = typeArg.literalValue
       else: typeName = "int"
       
-      if typeName == "string": typeName = "char*"
-      callCode = "rc_new_array(" & typeName & ", " & generateExpression(countArg) & ")"
-    else: callCode = "rc_new_array(int, 0)"
+      if typeName   == "string": typeName = "char*"
+      callCode      = "rc_new_array(" & typeName & ", " & generateExpression(countArg) & ")"
+    else: callCode  = "rc_new_array(int, 0)"
   
   of "getmem":
     if node.callArgs.len > 0: callCode = "rc_alloc(" & generateExpression(node.callArgs[0]) & ")"
@@ -1125,27 +1079,19 @@ proc generateCall(node: Node, context: CodegenContext, errorVar: string = ""): s
     if node.callArgs.len == 1:
       let arg = generateExpression(node.callArgs[0])
       
-      # Check if it's an arena variable
       var isArena = false
       if node.callArgs[0].kind == nkIdentifier:
         let varName = node.callArgs[0].identName
-        if arenaVariables.hasKey(varName):
-          isArena = true
+        if arenaVariables.hasKey(varName): isArena = true
       
-      if isArena:
-        # For arena arrays
-        callCode = "arena_array_len(" & arg & ")"
-      else:
-        # For RC arrays
-        callCode = "RC_GET_HEADER(" & arg & ")->array_count"
-    else:
-      callCode = "0"
+      if isArena: callCode = "arena_array_len(" & arg & ")"
+      else: callCode = "RC_GET_HEADER(" & arg & ")->array_count"
+    else: callCode = "0"
     
     if context != cgExpression:
       callCode &= ";\n"
       return indentLine(callCode, context)
-    else:
-      return callCode
+    else: return callCode
   
   of "print":
     callCode = "printf("
@@ -1183,10 +1129,8 @@ proc generateAssignment(node: Node, context: CodegenContext): string {.used.} =
     varName = node.left.identName
   of nkFieldAccess:
     leftCode = generateFieldAccess(node.left)
-    if node.left.base.kind == nkIdentifier:
-      varName = node.left.base.identName
-  else:
-    leftCode = generateExpression(node.left)
+    if node.left.base.kind == nkIdentifier: varName = node.left.base.identName
+  else: leftCode = generateExpression(node.left)
   
   var code = ""
   
@@ -1194,8 +1138,7 @@ proc generateAssignment(node: Node, context: CodegenContext): string {.used.} =
     code &= "if (" & leftCode & ") " & generateRcReleaseStmt(varName)
     code &= leftCode & " = " & generateExpression(node.right) & ";\n"
     code &= "if (" & leftCode & ") " & generateRcRetainStmt(varName)
-  else:
-    code = leftCode & " = " & generateExpression(node.right) & ";\n"
+  else: code = leftCode & " = " & generateExpression(node.right) & ";\n"
   
   return indentLine(code, context)
 
@@ -1219,8 +1162,7 @@ proc generateReturn(node: Node, context: CodegenContext): string {.used.} =
     else:
       code = "*error_out = " & errExpr & ";\n"
       code &= "  return " & retVal & ";"
-  else:
-    code = "return /* too many values */;"
+  else: code = "return /* too many values */;"
   return indentLine(code, context)
 
 # ============================ ARRAY TYPE GENERATORS ==========================
@@ -1256,27 +1198,25 @@ proc generateArrayLiteral(node: Node): string =
     else: getElementType(arr.elements[0])
   
   # Main logic
-  let isArenaArray = (node.kind == nkArenaArrayLit)
-  let isEmpty = (node.elements.len == 0)
-  let isMatrix = not isEmpty and isNestedArray(node)
+  let 
+    isArenaArray  = (node.kind == nkArenaArrayLit)
+    isEmpty       = (node.elements.len == 0)
+    isMatrix      = not isEmpty and isNestedArray(node)
   
   if isEmpty:
     if isMatrix:
-      if isArenaArray:
-        return "({\n    int** _tmp = (int**)arena_alloc_array(&global_arena, sizeof(int*), 0);\n    _tmp;\n})"
-      else:
-        return "rc_new_array(int*, 0)"
+      if isArenaArray: return "({\n    int** _tmp = (int**)arena_alloc_array(&global_arena, sizeof(int*), 0);\n    _tmp;\n})"
+      else: return "rc_new_array(int*, 0)"
     else:
-      if isArenaArray:
-        return "({\n    int* _tmp = (int*)arena_alloc_array(&global_arena, sizeof(int), 0);\n    _tmp;\n})"
-      else:
-        return "rc_new_array(int, 0)"
+      if isArenaArray: return "({\n    int* _tmp = (int*)arena_alloc_array(&global_arena, sizeof(int), 0);\n    _tmp;\n})"
+      else: return "rc_new_array(int, 0)"
   
   # Determine types
   let baseType = 
     if isMatrix:
-      let firstRow = node.elements[0]
-      let innerType = getInnermostElementType(firstRow)
+      let 
+        firstRow = node.elements[0]
+        innerType = getInnermostElementType(firstRow)
       if innerType == "char*": "char***"
       elif innerType == "double": "double**"
       else: "int**"
@@ -1329,11 +1269,12 @@ proc generateArrayLiteral(node: Node): string =
       
       for i, row in node.elements:
         if row.kind == nkArrayLit or row.kind == nkArenaArrayLit:
-          let rowSize = row.elements.len
-          let rowType = 
-            if baseType == "char***": "char**"
-            elif baseType == "double**": "double*"
-            else: "int*"
+          let 
+            rowSize = row.elements.len
+            rowType = 
+              if baseType == "char***": "char**"
+              elif baseType == "double**": "double*"
+              else: "int*"
           
           code &= "        _tmp[" & $i & "] = (" & rowType & ")arena_alloc_array(&global_arena, sizeof(" & 
                   base & "), " & $rowSize & ");\n"
@@ -1346,9 +1287,7 @@ proc generateArrayLiteral(node: Node): string =
             else:
               let val = generateExpression(elem)
               code &= "            _tmp[" & $i & "][" & $j & "] = " & val & ";\n"
-          
           code &= "        }\n"
-      
       code &= "    }\n    _tmp;\n})"
       return code
     else:
@@ -1363,8 +1302,9 @@ proc generateArrayLiteral(node: Node): string =
       
       for i, row in node.elements:
         if row.kind == nkArrayLit or row.kind == nkArenaArrayLit:
-          let rowSize = row.elements.len
-          let innerType = getInnermostElementType(row)
+          let 
+            rowSize = row.elements.len
+            innerType = getInnermostElementType(row)
           
           code &= "    _tmp[" & $i & "] = rc_new_array(" & innerType & ", " & $rowSize & ");\n"
           
@@ -1375,7 +1315,6 @@ proc generateArrayLiteral(node: Node): string =
             else:
               let val = generateExpression(elem)
               code &= "    _tmp[" & $i & "][" & $j & "] = " & val & ";\n"
-      
       code &= "    _tmp;\n})"
       return code
   
@@ -1425,10 +1364,8 @@ proc generateStructLiteral(node: Node): string =
   
   for assignment in node.fieldValues:
     let 
-      fieldName = assignment.left.identName
-      # Generate value - this handles nested structs recursively
+      fieldName  = assignment.left.identName
       fieldValue = generateExpression(assignment.right)
-    
     initializers.add("." & fieldName & " = " & fieldValue)
   
   resultStruct.add(initializers.join(", "))
@@ -1449,7 +1386,6 @@ proc getCleanupString(vars: seq[tuple[name: string, typeName: string, isArray: b
   for rcVar in vars:
     # Check if it's a pointer-to-pointer (2D array)
     if rcVar.typeName.endsWith("**"):
-      # 2D array - need nested cleanup
       cleanup &= "    if (" & rcVar.name & ") {\n"
       cleanup &= "        for (size_t _i = 0; _i < RC_GET_HEADER(" & rcVar.name & ")->array_count; _i++) {\n"
       cleanup &= "            if (" & rcVar.name & "[_i]) rc_release(" & rcVar.name & "[_i]);\n"
@@ -1457,7 +1393,6 @@ proc getCleanupString(vars: seq[tuple[name: string, typeName: string, isArray: b
       cleanup &= "        rc_release(" & rcVar.name & ");\n"
       cleanup &= "    }\n"
     else:
-      # 1D array or single value
       cleanup &= "    if (" & rcVar.name & ") rc_release(" & rcVar.name & ");\n"
   return cleanup
 
@@ -1480,31 +1415,27 @@ proc generateBlock(node: Node, context: CodegenContext): string =
         elif stmt.varValue != nil:
           if stmt.varValue.kind == nkArrayLit:
             # Check if it's a matrix (nested array)
-            var isMatrix = false
-            var elemType = "int"
+            var 
+              isMatrix = false
+              elemType = "int"
             if stmt.varValue.elements.len > 0:
               let first = stmt.varValue.elements[0]
               if first.kind == nkArrayLit:
                 isMatrix = true
                 if first.elements.len > 0:
                   let firstElem = first.elements[0]
-                  if firstElem.kind == nkStringLit:
-                    elemType = "char**"
+                  if firstElem.kind == nkStringLit: elemType = "char**"
                   elif firstElem.kind == nkLiteral and (firstElem.literalValue.contains('.') or firstElem.literalValue.contains('e')):
                     elemType = "double*"
-                  else:
-                    elemType = "int*"
+                  else: elemType = "int*"
               
             if isMatrix:
-              # It's a matrix, track as 2D array
               localRCVars.add((name: stmt.varName, typeName: elemType & "*", isArray: true))
             else:
-              # Regular 1D array
               var elemType = "int"
               if stmt.varValue.elements.len > 0:
                 let first = stmt.varValue.elements[0]
-                if first.kind == nkStringLit:
-                  elemType = "char*"
+                if first.kind == nkStringLit: elemType = "char*"
                 elif first.kind == nkLiteral and (first.literalValue.contains('.') or first.literalValue.contains('e')):
                   elemType = "double"
               localRCVars.add((name: stmt.varName, typeName: elemType & "*", isArray: true))
@@ -1581,17 +1512,12 @@ proc generateFunction(node: Node, hasArenaArrays: bool = false): string =
       var paramList: seq[string] = @[]
       for param in node.params:
         var cType = param.varType
-        if cType == "string": cType = "char*"
+        if param.varName == "argv": cType = "char**"
+        elif cType == "string": cType = "char*"
         paramList.add(cType & " " & param.varName)
       
-      if paramList.len == 2 and 
-         paramList[0] == "int argc" and 
-         (paramList[1] == "char** argv" or paramList[1] == "char*[] argv"):
-        code = "int main(int argc, char** argv) {\n"
-      else:
-        code = "int main(" & paramList.join(", ") & ") {\n"
-    else:
-      code = "int main() {\n"
+      code = "int main(" & paramList.join(", ") & ") {\n"
+    else: code = "int main() {\n"
     
     if hasArenaArrays:
       code &= "  // Initialize arena\n"
@@ -1605,9 +1531,7 @@ proc generateFunction(node: Node, hasArenaArrays: bool = false): string =
       code &= "  // Clean up arena\n"
       code &= "  arena_free(&global_arena);\n"
     
-    if not code.contains("return 0;"):
-      code &= "  return 0;\n"
-    
+    if not code.contains("return 0;"): code &= "  return 0;\n"
     code &= "}\n"
   else:
     var paramList: seq[string] = @[]
@@ -1622,17 +1546,14 @@ proc generateFunction(node: Node, hasArenaArrays: bool = false): string =
     
     code = returnType & " " & node.funcName & "(" & paramList.join(", ") & ") {\n"
     
-    if node.returnsError:
-      code &= "  char** error_out = NULL;\n"
+    if node.returnsError: code &= "  char** error_out = NULL;\n"
     
     if node.body != nil:
       let bodyCode = generateBlock(node.body, cgFunction)
       code &= bodyCode
     
-    if returnType == "void" and not code.contains("return"):
-      code &= "}\n"
-    else:
-      code &= "}\n"
+    if returnType == "void" and not code.contains("return"): code &= "}\n"
+    else: code &= "}\n"
   
   return code
 
@@ -1683,10 +1604,8 @@ proc checkNodeForArena(n: Node): bool =
   else: return false
 
 # ============================= SCAN FOR ARENA SIZES ==============================
-# Add a helper function to scan for arena sizes
 proc scanForArenaSizes(node: Node): int =
-  if node == nil:
-    return 0
+  if node == nil: return 0
   
   case node.kind
   of nkProgram:
@@ -1708,8 +1627,7 @@ proc scanForArenaSizes(node: Node): int =
       try:
         let sizeNum = parseInt(sizeStr)
         if sizeNum > result: result = sizeNum
-      except:
-        discard
+      except: discard
         
   of nkIf:
     let thenSize = scanForArenaSizes(node.ifThen)
@@ -1726,20 +1644,14 @@ proc scanForArenaSizes(node: Node): int =
     let bodySize = scanForArenaSizes(node.rangeBody)
     if bodySize > result: result = bodySize
       
-  else:
-    # For other node types, return 0
-    result = 0
+  else: result = 0
 
 # ============================= PROGRAM GENERATOR ==============================
 proc generateProgram(node: Node): string =
-  # Reset state for this compilation
   rcVariables.clear()
   arenaVariables.clear()
-  
-  # SCAN FIRST: Find the maximum arena size in the entire program
   actualArenaSize = scanForArenaSizes(node)
   
-  # If no arena size found, use default
   if actualArenaSize == 0:
     actualArenaSize = maxArenaSize
   
@@ -1754,7 +1666,6 @@ proc generateProgram(node: Node): string =
     structsCode =     ""
     hasArenaArrays =  false 
 
-  # Check if we need arena support
   for funcNode in node.functions:
     if checkNodeForArena(funcNode):
       hasArenaArrays = true
@@ -1773,8 +1684,7 @@ proc generateProgram(node: Node): string =
          "#include <" in cCode or 
          "#include \"" in cCode:
         userIncludes &= cCode
-      else:
-        userCode &= cCode
+      else: userCode &= cCode
       
       if "int main()" in cCode: hasCMain = true
     of nkFunction:
@@ -1842,7 +1752,6 @@ proc generateC*(node: Node, context: string = "global"): string =
   of nkElse:            ""
   of nkPtrType:         "/* ptr_type */"
   of nkRefType:         "/* ref_type */"
-  
   # Reference counting nodes
   of nkRcNew:           return generateRcNew(node, cgContext)
   of nkRcRetain:        return generateRcRetain(node, cgContext)
@@ -1850,12 +1759,10 @@ proc generateC*(node: Node, context: string = "global"): string =
   of nkWeakRef:         return generateWeakRef(node, cgContext)
   of nkStrongRef:       return generateStrongRef(node, cgContext)
   of nkRcInit:          return generateRcInit(node, cgContext)
-  
   # Arena nodes - ADD THESE
   of nkArena:           return "/* arena declaration - not implemented */"
   of nkArenaAlloc:      return "/* arena allocation - not implemented */"
   of nkArenaArrayLit:   return generateArrayLiteral(node)
-  
   # These already call generateExpression which handles nkArenaArrayLit
   of nkBinaryExpr, nkIndexExpr, nkArrayLit: return generateExpression(node)
   of nkVarDecl, nkInferredVarDecl: return generateVarDecl(node, cgContext)

@@ -219,7 +219,7 @@ void stress_test() {
 }
 int main() {
     // Initialize arena
-    global_arena = arena_init_dynamic(10485760);
+    global_arena = arena_init_dynamic(1048576);
     stress_test();
     // Clean up arena
     arena_free(&global_arena);

@@ -48,7 +48,6 @@ proc resolveImports(source: string, baseDir: string): string =
         if endIdx != -1:
           filename = trimmed[startIdx+1 ..< endIdx]
           
-          # Check for { item1, item2 } after filename
           let afterFile = trimmed[endIdx+1 .. ^1].strip()
           if afterFile.startsWith("{"):
             var braceEnd = afterFile.find("}")
@@ -307,11 +306,6 @@ Usage:
   
 Options:
   -h, --help               # Show this help message
-
-Examples:
-  zal main.zal             # Fast compile & run with tcc
-  zal init myproject       # Create new project
-  zal init                 # Create 'myproject' folder
 """
 
 # =========================== RUN FILE ===================================
